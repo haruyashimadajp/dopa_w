@@ -418,6 +418,7 @@
       this.renderer.brush = null;
       this.renderer.brushQueue.length = 0;
       this.renderer.ca = null;
+      if (this.renderer.beatRings) this.renderer.beatRings.length = 0;
       if (this.slot) { this.slot = null; this.ui.hideSlot(); }
     }
 
@@ -884,6 +885,7 @@
     /** BGMのバスドラムと同期（audio.js から呼ばれる） */
     onBeatPulse() {
       this.renderer.beat = 1;
+      if (this.renderer.addBeatRing) this.renderer.addBeatRing(this.trancePhase);
     }
 
     /** 巨大毛筆カットインの表示開始時（金箔飛沫＋太鼓／鬼神は衝撃波） */

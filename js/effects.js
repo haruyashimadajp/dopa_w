@@ -806,10 +806,12 @@
       for (let i = 0; i < 70; i++) this.embers.push({ x: Math.random(), y: Math.random(), s: U.rand(0.5, 2), v: U.rand(12, 40), p: Math.random() * TAU });
       // v2 画面トランス
       this.beat = 0;                 // BGMキック同期の脈動（1→0）
+      this.beatRings = [];           // BGMキック同期の背景ビート波紋
       this.patT = 0;                 // 紋様のアニメ時間（覚醒以降2.5倍速）
       this.mix2 = 0; this.mix3 = 0;  // 背景ベース色の覚醒・鬼神ブレンド
+      this.hype = 0;                 // コンボ連動の連続熱量（0〜1）
       this.ambient = [];
-      for (let i = 0; i < 90; i++) this.ambient.push(this._newAmbient(true));
+      for (let i = 0; i < 160; i++) this.ambient.push(this._newAmbient(true));
       this.arcs = [];                // 鬼神：空間を走る紫電アーク
       this.bgBolts = [];             // 鬼神：背景の黄金・深紅の稲妻＆空間亀裂
       this.arcT = 0;
@@ -818,6 +820,8 @@
       this.ca = null;                // RGB色収差
       this.caR = document.createElement('canvas');
       this.caC = document.createElement('canvas');
+      this.caRctx = this.caR.getContext('2d');
+      this.caCctx = this.caC.getContext('2d');
       this.resize();
     }
 
@@ -831,8 +835,9 @@
       this.canvas.style.height = h + 'px';
       this.buffer.width = this.canvas.width;
       this.buffer.height = this.canvas.height;
-      this.caR.width = this.caC.width = this.canvas.width;
-      this.caR.height = this.caC.height = this.canvas.height;
+      // 色収差バッファは 0.5x 解像度にして負荷を 1/4 に削減（60fps維持＆柔らかな光学滲み）
+      this.caR.width = this.caC.width = Math.max(1, Math.floor(this.canvas.width * 0.5));
+      this.caR.height = this.caC.height = Math.max(1, Math.floor(this.canvas.height * 0.5));
       this._buildVignette();
       this.theme = null; // 背景キャッシュ再生成
     }
@@ -1009,16 +1014,18 @@
       return { x: Math.random(), y: scatter ? Math.random() : 1.05, v: U.rand(0.4, 1), s: U.rand(0.6, 1.4), p: Math.random() * TAU, k: Math.random() };
     }
 
-    /** フェーズ別の紋様パラメータ */
+    /** フェーズ別の紋様パラメータ（コンボ数に応じて連続的に発光・脈動が激化） */
     _trance(game, pal) {
       const ph = game.trancePhase || 1;
+      const combo = game.run ? game.run.combo : 0;
+      const hype = U.clamp(combo / 150, 0, 1);
       const theme = game.stage ? game.stage.theme : 'void';
       const base = {
         bamboo: [C.jade, C.cyan], castle: [C.gold, C.gold], void: ['#C8D2EB', '#C8D2EB'], endless: [null, null]
       }[theme] || [C.cyan, C.cyan];
-      if (ph === 1) return { ph, alpha: 0.05, colA: base[0], colB: base[1], pulse: 1 };
-      if (ph === 2) return { ph, alpha: 0.18, colA: C.cyan, colB: C.crimson, pulse: 1 };
-      return { ph, alpha: 0.24, colA: C.gold, colB: C.crimson, pulse: 1 + 0.08 * this.beat };
+      if (ph === 1) return { ph, hype, alpha: 0.06 + hype * 0.08, colA: base[0], colB: base[1], pulse: 1 + 0.012 * this.beat };
+      if (ph === 2) return { ph, hype, alpha: 0.24 + hype * 0.14, colA: C.cyan, colB: C.crimson, pulse: 1 + 0.045 * this.beat };
+      return { ph, hype, alpha: 0.34 + hype * 0.18, colA: C.gold, colB: C.crimson, pulse: 1 + 0.10 * this.beat };
     }
 
     _drawLayer1(ctx, game, pal) {
@@ -1041,18 +1048,56 @@
       ctx.drawImage(this.bgCache, 0, 0, this.bgCache.width, this.bgCache.height, 0, 0, w, h);
 
       const tr = this._trance(game, pal);
-      // 背景ベース色：通常墨黒 → 覚醒紅墨 → 鬼神黄金墨
-      this.mix2 += ((tr.ph >= 2 ? 1 : 0) - this.mix2) * Math.min(1, dt * 3);
-      this.mix3 += ((tr.ph >= 3 ? 1 : 0) - this.mix3) * Math.min(1, dt * 3);
-      if (this.mix2 > 0.01) { ctx.fillStyle = U.rgba(C.bgInkAwaken, 0.62 * this.mix2); ctx.fillRect(-40, -40, w + 80, h + 80); }
-      if (this.mix3 > 0.01) { ctx.fillStyle = U.rgba(C.bgInkKishin, 0.7 * this.mix3); ctx.fillRect(-40, -40, w + 80, h + 80); }
-      // 紋様のアニメ速度（覚醒以降2.5倍）
-      this.patT += dt * Math.max(0.1, game.worldScale == null ? 1 : Math.max(game.worldScale, 0.25)) * (tr.ph >= 2 ? 2.5 : 1);
+      // 背景ベース色＆連続熱量：通常墨黒 → 覚醒紅藍 → 鬼神黄金深紅
+      this.mix2 += ((tr.ph >= 2 ? 1 : 0) - this.mix2) * Math.min(1, dt * 3.5);
+      this.mix3 += ((tr.ph >= 3 ? 1 : 0) - this.mix3) * Math.min(1, dt * 3.5);
+      this.hype += (tr.hype - this.hype) * Math.min(1, dt * 3);
+      if (this.mix2 > 0.01) {
+        ctx.fillStyle = U.rgba(C.bgInkAwaken, 0.58 * this.mix2);
+        ctx.fillRect(-40, -40, w + 80, h + 80);
+        // 覚醒ラジアル後光（中央からシアン〜深紅のオーラがビートと連動）
+        ctx.save();
+        ctx.globalCompositeOperation = 'lighter';
+        const rg = ctx.createRadialGradient(w / 2, h / 2, 10, w / 2, h / 2, Math.max(w, h) * 0.72);
+        const pulseA = (0.14 + 0.14 * this.beat) * this.mix2;
+        rg.addColorStop(0, U.rgba(this.mix3 > 0.3 ? C.gold : C.cyan, pulseA));
+        rg.addColorStop(0.45, U.rgba(C.crimson, pulseA * 0.65));
+        rg.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = rg;
+        ctx.fillRect(-40, -40, w + 80, h + 80);
+        ctx.restore();
+      }
+      if (this.mix3 > 0.01) {
+        ctx.fillStyle = U.rgba(C.bgInkKishin, 0.62 * this.mix3);
+        ctx.fillRect(-40, -40, w + 80, h + 80);
+        // 鬼神トランス専用：回転する黄金＆深紅のゴッドレイ（後光放射）
+        ctx.save();
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.translate(w / 2, h / 2);
+        const R = Math.hypot(w, h) * 0.7;
+        const rays = 16;
+        ctx.rotate(this.patT * 0.18);
+        for (let i = 0; i < rays; i++) {
+          const a = (i / rays) * TAU;
+          const span = 0.08 + 0.04 * this.beat;
+          ctx.fillStyle = U.rgba(i % 2 ? C.gold : C.crimson, (0.075 + 0.075 * this.beat) * this.mix3);
+          ctx.beginPath();
+          ctx.moveTo(0, 0);
+          ctx.lineTo(Math.cos(a - span) * R, Math.sin(a - span) * R);
+          ctx.lineTo(Math.cos(a + span) * R, Math.sin(a + span) * R);
+          ctx.closePath();
+          ctx.fill();
+        }
+        ctx.restore();
+      }
+      // 紋様のアニメ速度（通常1x → 覚醒2.6x → 鬼神4.0x）
+      const speedMul = tr.ph >= 3 ? 4.0 : tr.ph >= 2 ? 2.6 : 1 + this.hype;
+      this.patT += dt * Math.max(0.1, game.worldScale == null ? 1 : Math.max(game.worldScale, 0.25)) * speedMul;
       const t = this.patT;
       const k = tr.alpha / 0.18;     // 紋様の発光強度係数
 
       ctx.save();
-      // 鬼神：バスドラムに合わせ紋様が 1.0 → 1.08 へ脈動
+      // バスドラムに合わせて背景紋様が脈動
       if (tr.pulse !== 1) {
         ctx.translate(w / 2, h / 2); ctx.scale(tr.pulse, tr.pulse); ctx.translate(-w / 2, -h / 2);
       }
@@ -1060,12 +1105,12 @@
         ctx.lineCap = 'round';
         for (const b of this.bamboo) {
           const sway = Math.sin(t * 0.9 + b.ph) * 16 * b.depth;
-          const a = (0.1 + b.depth * 0.22) * k;
+          const a = (0.1 + b.depth * 0.24) * k;
           ctx.strokeStyle = `rgba(10,30,26,${0.6 * b.depth + 0.2})`;
           ctx.lineWidth = b.w * b.depth + 2;
           ctx.beginPath(); ctx.moveTo(b.x, h + 10); ctx.quadraticCurveTo(b.x + sway * 0.3, h * 0.5, b.x + sway, -10); ctx.stroke();
-          ctx.strokeStyle = U.rgba(tr.colA, Math.min(1, a * 0.9));
-          ctx.lineWidth = tr.ph >= 2 ? 2 : 1.2;
+          ctx.strokeStyle = U.rgba(tr.colA, Math.min(1, a * 0.95));
+          ctx.lineWidth = tr.ph >= 3 ? 2.8 : tr.ph >= 2 ? 2.1 : 1.2;
           ctx.beginPath(); ctx.moveTo(b.x + b.w * 0.4, h + 10); ctx.quadraticCurveTo(b.x + sway * 0.3 + b.w * 0.4, h * 0.5, b.x + sway + b.w * 0.4, -10); ctx.stroke();
           ctx.strokeStyle = U.rgba(tr.colB, Math.min(1, a));
           for (let y = h; y > 0; y -= b.joint) {
@@ -1074,7 +1119,7 @@
             ctx.beginPath(); ctx.moveTo(sx - b.w * 0.6, y); ctx.lineTo(sx + b.w * 0.6, y); ctx.stroke();
           }
           if (b.depth > 0.5) {
-            ctx.fillStyle = U.rgba(tr.colA, Math.min(0.6, (0.05 + b.depth * 0.05) * k));
+            ctx.fillStyle = U.rgba(tr.colA, Math.min(0.7, (0.05 + b.depth * 0.06) * k));
             for (let j = 0; j < 3; j++) {
               const ly = (h * (0.15 + j * 0.25) + b.ph * 30) % h;
               const kk = 1 - ly / h;
@@ -1087,20 +1132,20 @@
       } else if (theme === 'castle') {
         const m = Math.min(w, h);
         this._gear(ctx, w * 0.5, h * 0.5, m * 0.42, 28, t * 0.05, tr.colA, tr.alpha);
-        this._gear(ctx, w * 0.12, h * 0.2, m * 0.22, 16, -t * 0.09, tr.colB, tr.alpha * 1.1);
-        this._gear(ctx, w * 0.9, h * 0.85, m * 0.26, 18, t * 0.08, tr.colA, tr.alpha * 1.1);
+        this._gear(ctx, w * 0.12, h * 0.2, m * 0.22, 16, -t * 0.09, tr.colB, tr.alpha * 1.15);
+        this._gear(ctx, w * 0.9, h * 0.85, m * 0.26, 18, t * 0.08, tr.colA, tr.alpha * 1.15);
         ctx.globalCompositeOperation = 'lighter';
         for (const e of this.embers) {
-          e.y -= (e.v / h) * dt * Math.max(0.3, game.worldScale || 1) * (tr.ph >= 2 ? 2.5 : 1);
+          e.y -= (e.v / h) * dt * Math.max(0.3, game.worldScale || 1) * (tr.ph >= 2 ? 2.8 : 1);
           if (e.y < -0.02) { e.y = 1.02; e.x = Math.random(); }
           const x = e.x * w + Math.sin(t * 1.5 + e.p) * 12;
-          ctx.fillStyle = `rgba(255,${120 + (e.p * 20) | 0},40,${0.35 + Math.sin(t * 4 + e.p) * 0.2})`;
-          ctx.fillRect(x, e.y * h, e.s, e.s * 1.6);
+          ctx.fillStyle = `rgba(255,${120 + (e.p * 20) | 0},40,${0.4 + Math.sin(t * 4 + e.p) * 0.25})`;
+          ctx.fillRect(x, e.y * h, e.s, e.s * 1.8);
         }
         ctx.globalCompositeOperation = 'source-over';
       } else if (theme === 'void') {
         this._mandala(ctx, w / 2, h * 0.45, Math.min(w, h) * 0.46, t, tr.ph === 1 ? '#C8D2EB' : tr.colA, tr.alpha);
-        if (tr.ph >= 2) this._mandala(ctx, w / 2, h * 0.45, Math.min(w, h) * 0.3, -t * 1.3, tr.colB, tr.alpha * 0.8);
+        if (tr.ph >= 2) this._mandala(ctx, w / 2, h * 0.45, Math.min(w, h) * 0.32, -t * 1.4, tr.colB, tr.alpha * 0.9);
       } else if (theme === 'endless') {
         const cyc = ['#E6ECFF', '#FF1E42', '#FFBE2E'];
         const ph = (game.time / 40) % 3;
@@ -1109,20 +1154,39 @@
         const cyCol = '#' + [c0.r + (c1.r - c0.r) * f, c0.g + (c1.g - c0.g) * f, c0.b + (c1.b - c0.b) * f]
           .map((v) => ('0' + Math.round(v).toString(16)).slice(-2)).join('');
         const colA = tr.ph === 1 ? cyCol : tr.colA, colB = tr.ph === 1 ? cyCol : tr.colB;
-        ctx.fillStyle = U.rgba(cyCol, 0.05);
+        ctx.fillStyle = U.rgba(cyCol, 0.06);
         ctx.fillRect(0, 0, w, h);
-        this._mandala(ctx, w / 2, h / 2, Math.min(w, h) * 0.5, t, colA, Math.max(0.08, tr.alpha));
-        this._gear(ctx, w * 0.15, h * 0.8, Math.min(w, h) * 0.2, 16, t * 0.1, colB, Math.max(0.06, tr.alpha * 0.8));
-        this._gear(ctx, w * 0.85, h * 0.2, Math.min(w, h) * 0.2, 16, -t * 0.1, colB, Math.max(0.06, tr.alpha * 0.8));
+        this._mandala(ctx, w / 2, h / 2, Math.min(w, h) * 0.5, t, colA, Math.max(0.1, tr.alpha));
+        this._gear(ctx, w * 0.15, h * 0.8, Math.min(w, h) * 0.2, 16, t * 0.1, colB, Math.max(0.08, tr.alpha * 0.9));
+        this._gear(ctx, w * 0.85, h * 0.2, Math.min(w, h) * 0.2, 16, -t * 0.1, colB, Math.max(0.08, tr.alpha * 0.9));
       }
       ctx.restore();
 
-      // 鬼神：背景を走る黄金・深紅の稲妻＆空間亀裂
-      if (tr.ph >= 3 && Math.random() < dt * 3) {
+      // BGMキック同期の背景ビート波紋（Rank A以上で鮮烈に広がる）
+      if (this.beatRings.length) {
+        ctx.save();
+        ctx.globalCompositeOperation = 'lighter';
+        const maxR = Math.hypot(w, h) * 0.62;
+        for (const r of this.beatRings) {
+          r.t += dt;
+          const p = r.t / r.dur;
+          if (p >= 1) continue;
+          const a = (1 - p) * (r.ph >= 3 ? 0.36 : 0.22);
+          const rad = 20 + maxR * U.easeOutCubic(p);
+          ctx.strokeStyle = U.rgba(r.col, a);
+          ctx.lineWidth = (r.ph >= 3 ? 6 : 3.5) * (1 - p) + 1;
+          ctx.beginPath(); ctx.arc(w / 2, h / 2, rad, 0, TAU); ctx.stroke();
+        }
+        ctx.restore();
+        U.compact(this.beatRings, (r) => r.t < r.dur);
+      }
+
+      // 鬼神：背景を走る黄金・深紅の稲妻＆空間亀裂（頻度＆発光アップ）
+      if (tr.ph >= 3 && Math.random() < dt * (4.5 + this.hype * 3)) {
         const x0 = Math.random() * w, pts = [x0, -10];
         let x = x0, y = -10;
-        while (y < h + 10) { x += U.rand(-60, 60); y += U.rand(40, 90); pts.push(x, y); }
-        this.bgBolts.push({ pts, life: 0.35, max: 0.35, col: Math.random() < 0.5 ? C.gold : C.crimson });
+        while (y < h + 10) { x += U.rand(-65, 65); y += U.rand(38, 85); pts.push(x, y); }
+        this.bgBolts.push({ pts, life: 0.38, max: 0.38, col: Math.random() < 0.55 ? C.gold : C.crimson });
       }
       if (this.bgBolts.length) {
         ctx.save();
@@ -1131,7 +1195,7 @@
         for (const b of this.bgBolts) {
           b.life -= dt;
           const a = Math.max(0, b.life / b.max);
-          for (const [lw, al] of [[10, 0.12], [3, 0.5], [1.2, 0.9]]) {
+          for (const [lw, al] of [[14, 0.16], [4, 0.58], [1.4, 0.95]]) {
             ctx.strokeStyle = al > 0.8 ? `rgba(255,255,255,${a * al})` : U.rgba(b.col, a * al);
             ctx.lineWidth = lw;
             ctx.beginPath(); ctx.moveTo(b.pts[0], b.pts[1]);
@@ -1152,10 +1216,10 @@
       }
     }
 
-    /** 環境アンビエント粒子：墨塵20 ／ 火の粉＆ネオン桜吹雪90 ／ 黄金光粒子＋紫電アーク */
+    /** 環境アンビエント粒子：墨塵20 ／ 火の粉＆ネオン桜吹雪110 ／ 黄金金箔＆紅蓮火の粉160＋紫電アーク */
     _drawAmbient(ctx, game, tr, dt) {
       const w = this.w, h = this.h;
-      const n = tr.ph === 1 ? 20 : 90;
+      const n = tr.ph === 1 ? 20 : tr.ph === 2 ? 110 : 160;
       const sc = Math.max(0.25, game.worldScale == null ? 1 : game.worldScale);
       ctx.save();
       for (let i = 0; i < n; i++) {
@@ -1168,55 +1232,65 @@
           ctx.beginPath(); ctx.arc(q.x * w, q.y * h, 1.5 + q.s * 1.5, 0, TAU); ctx.fill();
         } else if (tr.ph === 2) {
           // 火の粉＆ネオン桜吹雪：下から上へ高速で吹き上がる
-          q.y -= q.v * 0.45 * dt * sc; q.x += Math.sin(this.patT * 2 + q.p) * 0.0016;
+          q.y -= q.v * 0.52 * dt * sc; q.x += Math.sin(this.patT * 2.2 + q.p) * 0.002;
           if (q.y < -0.05) Object.assign(q, this._newAmbient(false));
           const x = q.x * w, y = q.y * h;
           ctx.globalCompositeOperation = 'lighter';
-          if (q.k < 0.5) {
-            ctx.fillStyle = `rgba(255,${110 + (q.k * 160) | 0},40,${0.55 + Math.sin(this.patT * 8 + q.p) * 0.25})`;
-            ctx.fillRect(x, y, 1.6 * q.s, 3.2 * q.s);
+          if (q.k < 0.48) {
+            ctx.fillStyle = `rgba(255,${110 + (q.k * 170) | 0},40,${0.62 + Math.sin(this.patT * 8 + q.p) * 0.28})`;
+            ctx.fillRect(x, y, 2.0 * q.s, 4.0 * q.s);
           } else {
             ctx.save();
-            ctx.translate(x, y); ctx.rotate(this.patT * 3 * q.s + q.p);
-            ctx.fillStyle = U.rgba(q.k < 0.8 ? C.sakura : C.cyan, 0.6);
-            ctx.beginPath(); ctx.ellipse(0, 0, 4.5 * q.s, 2.2 * q.s, 0, 0, TAU); ctx.fill();
+            ctx.translate(x, y); ctx.rotate(this.patT * 3.2 * q.s + q.p);
+            ctx.fillStyle = U.rgba(q.k < 0.78 ? C.sakura : C.cyan, 0.72);
+            ctx.beginPath(); ctx.ellipse(0, 0, 5.2 * q.s, 2.5 * q.s, 0, 0, TAU); ctx.fill();
             ctx.restore();
           }
         } else {
-          // 黄金の光粒子
-          q.y -= q.v * 0.3 * dt * sc; q.x += Math.sin(this.patT * 3 + q.p) * 0.002;
+          // 鬼神トランス：黄金の金箔吹雪＋紅蓮の火の粉＋閃光粒子
+          q.y -= q.v * 0.45 * dt * sc; q.x += Math.sin(this.patT * 3.5 + q.p) * 0.0028;
           if (q.y < -0.05) Object.assign(q, this._newAmbient(false));
+          const x = q.x * w, y = q.y * h;
           ctx.globalCompositeOperation = 'lighter';
-          const tw = 0.5 + Math.sin(this.patT * 10 + q.p) * 0.5;
-          ctx.fillStyle = U.rgba(q.k < 0.75 ? C.gold : C.crimson, 0.35 + tw * 0.5);
-          ctx.beginPath(); ctx.arc(q.x * w, q.y * h, 1 + q.s * 1.6 * tw, 0, TAU); ctx.fill();
+          const tw = 0.5 + Math.sin(this.patT * 11 + q.p) * 0.5;
+          if (q.k < 0.45) {
+            // 舞い散る黄金の金箔片
+            ctx.save();
+            ctx.translate(x, y); ctx.rotate(this.patT * 4 * q.s + q.p);
+            ctx.fillStyle = U.rgba(C.gold, 0.45 + tw * 0.48);
+            ctx.fillRect(-3.2 * q.s, -1.6 * q.s, 6.4 * q.s, 3.2 * q.s);
+            ctx.restore();
+          } else {
+            ctx.fillStyle = U.rgba(q.k < 0.8 ? C.crimson : '#FFFFFF', 0.42 + tw * 0.52);
+            ctx.beginPath(); ctx.arc(x, y, 1.3 + q.s * 2.1 * tw, 0, TAU); ctx.fill();
+          }
         }
       }
-      // 鬼神：空間を走る紫電の稲妻アーク（毎秒4〜8本）
+      // 鬼神：空間を走る紫電＆黄金の稲妻アーク（毎秒6〜10本）
       if (tr.ph >= 3) {
         this.arcT -= dt;
         if (this.arcT <= 0) {
-          this.arcT = 1 / U.rand(4, 8);
-          const x1 = Math.random() * w, y1 = Math.random() * h, a = Math.random() * TAU, L = U.rand(80, 220);
+          this.arcT = 1 / U.rand(6, 10);
+          const x1 = Math.random() * w, y1 = Math.random() * h, a = Math.random() * TAU, L = U.rand(90, 260);
           const pts = [x1, y1];
           const segs = 6;
           for (let s = 1; s <= segs; s++) {
             const t = s / segs;
-            pts.push(x1 + Math.cos(a) * L * t + U.rand(-14, 14), y1 + Math.sin(a) * L * t + U.rand(-14, 14));
+            pts.push(x1 + Math.cos(a) * L * t + U.rand(-16, 16), y1 + Math.sin(a) * L * t + U.rand(-16, 16));
           }
-          this.arcs.push({ pts, life: 0.16 });
+          this.arcs.push({ pts, life: 0.18, col: Math.random() < 0.6 ? C.shiden : C.gold });
         }
       }
       if (this.arcs.length) {
         ctx.globalCompositeOperation = 'lighter';
         for (const r of this.arcs) {
           r.life -= dt;
-          const a = Math.max(0, r.life / 0.16);
-          ctx.strokeStyle = U.rgba(C.shiden, 0.8 * a); ctx.lineWidth = 2;
+          const a = Math.max(0, r.life / 0.18);
+          ctx.strokeStyle = U.rgba(r.col || C.shiden, 0.85 * a); ctx.lineWidth = 2.4;
           ctx.beginPath(); ctx.moveTo(r.pts[0], r.pts[1]);
           for (let i = 2; i < r.pts.length; i += 2) ctx.lineTo(r.pts[i], r.pts[i + 1]);
           ctx.stroke();
-          ctx.strokeStyle = `rgba(255,255,255,${0.8 * a})`; ctx.lineWidth = 0.8; ctx.stroke();
+          ctx.strokeStyle = `rgba(255,255,255,${0.9 * a})`; ctx.lineWidth = 1; ctx.stroke();
         }
         U.compact(this.arcs, (r) => r.life > 0);
       }
@@ -1245,42 +1319,65 @@
       if (!b) return;
       const w = this.w, h = this.h;
       const p = b.t / b.dur;
-      const appear = Math.min(1, b.t / 0.22);
+      const appear = Math.min(1, b.t / 0.18);
       const fade = p > 0.72 ? Math.max(0, 1 - (p - 0.72) / 0.28) : 1;
       const big = b.phase >= 3;
-      // 覚醒：画面幅75% ／ 鬼神：画面全体を覆う
-      const targetW = w * (big ? 0.96 : 0.75);
+      // 覚醒：画面幅78% ／ 鬼神：画面全体を覆う
+      const targetW = w * (big ? 0.96 : 0.78);
       ctx.save();
       ctx.font = `900 100px "Hiragino Mincho ProN","Yu Mincho","Noto Serif JP","MS PMincho",serif`;
       const mw = ctx.measureText(b.text).width || 100;
       let size = 100 * targetW / mw;
-      size = Math.min(size, h * (big ? 0.62 : 0.45));
-      const scale = 1.35 - 0.35 * U.easeOutCubic(appear);
+      size = Math.min(size, h * (big ? 0.64 : 0.48));
+      const scale = 1.45 - 0.45 * U.easeOutCubic(appear);
       ctx.translate(w / 2, h / 2);
-      ctx.scale(scale, scale);
       ctx.rotate(-0.05);
+      const a = appear * fade;
+
+      if (!pal.inv) {
+        // 勢いよく走り抜ける漆黒の毛筆帯＆ネオンエッジ
+        const bandW = w * 1.3 * U.easeOutCubic(appear);
+        const bandH = size * (big ? 0.92 : 0.78);
+        const bgGrad = ctx.createLinearGradient(-bandW / 2, 0, bandW / 2, 0);
+        bgGrad.addColorStop(0, 'rgba(0,0,0,0)');
+        bgGrad.addColorStop(0.15, `rgba(6,4,10,${0.72 * a})`);
+        bgGrad.addColorStop(0.85, `rgba(6,4,10,${0.72 * a})`);
+        bgGrad.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = bgGrad;
+        ctx.fillRect(-bandW / 2, -bandH / 2, bandW, bandH);
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.fillStyle = U.rgba(big ? C.gold : C.cyan, 0.55 * a);
+        ctx.fillRect(-bandW / 2, -bandH / 2, bandW, big ? 3 : 2);
+        ctx.fillStyle = U.rgba(big ? C.crimson : C.gold, 0.55 * a);
+        ctx.fillRect(-bandW / 2, bandH / 2 - (big ? 3 : 2), bandW, big ? 3 : 2);
+        ctx.globalCompositeOperation = 'source-over';
+      }
+
+      ctx.scale(scale, scale);
       ctx.font = `900 ${size}px "Hiragino Mincho ProN","Yu Mincho","Noto Serif JP","MS PMincho",serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      const a = appear * fade;
       if (pal.inv) {
-        ctx.fillStyle = `rgba(9,10,15,${0.18 * a})`;
+        ctx.fillStyle = `rgba(9,10,15,${0.28 * a})`;
         ctx.fillText(b.text, 0, 0);
       } else {
-        // 墨のにじみ
-        ctx.fillStyle = `rgba(0,0,0,${0.45 * a})`;
+        // 墨の落ち影
+        ctx.fillStyle = `rgba(0,0,0,${0.7 * a})`;
         ctx.fillText(b.text, size * 0.04, size * 0.05);
         const g = ctx.createLinearGradient(-targetW / 2, 0, targetW / 2, 0);
-        if (big) { g.addColorStop(0, U.rgba(C.crimson, 0.42 * a)); g.addColorStop(0.5, U.rgba(C.gold, 0.5 * a)); g.addColorStop(1, U.rgba(C.crimson, 0.42 * a)); }
-        else { g.addColorStop(0, U.rgba(C.cyan, 0.26 * a)); g.addColorStop(0.5, U.rgba(C.gold, 0.32 * a)); g.addColorStop(1, U.rgba(C.cyan, 0.26 * a)); }
+        if (big) { g.addColorStop(0, U.rgba(C.crimson, 0.78 * a)); g.addColorStop(0.5, U.rgba(C.gold, 0.9 * a)); g.addColorStop(1, U.rgba(C.crimson, 0.78 * a)); }
+        else { g.addColorStop(0, U.rgba(C.cyan, 0.58 * a)); g.addColorStop(0.5, U.rgba(C.gold, 0.68 * a)); g.addColorStop(1, U.rgba(C.cyan, 0.58 * a)); }
         ctx.fillStyle = g;
         ctx.fillText(b.text, 0, 0);
-        ctx.lineWidth = Math.max(2, size * 0.012);
-        ctx.strokeStyle = U.rgba(big ? C.gold : '#FFFFFF', 0.35 * a);
+        // 加算グロー＆縁取りで鮮烈に浮かせる
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.lineWidth = Math.max(2.5, size * 0.015);
+        ctx.strokeStyle = U.rgba(big ? '#FFF3C4' : '#E0FBFF', 0.62 * a);
         ctx.strokeText(b.text, 0, 0);
-        ctx.font = `800 ${Math.max(14, size * 0.09)}px "Hiragino Sans","Yu Gothic","Noto Sans JP",sans-serif`;
-        ctx.fillStyle = U.rgba(big ? C.gold : C.cyan, 0.55 * a);
-        ctx.fillText(b.sub, 0, size * 0.62);
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.font = `800 ${Math.max(15, size * 0.095)}px "Hiragino Sans","Yu Gothic","Noto Sans JP",sans-serif`;
+        ctx.fillStyle = U.rgba(big ? C.gold : C.cyan, 0.82 * a);
+        ctx.fillText(b.sub, 0, size * 0.56);
       }
       ctx.restore();
     }
@@ -1291,16 +1388,16 @@
       if (ph < 2 || game.state === 'TITLE' || game.state === 'DOJO') return;
       const w = this.w, h = this.h, cx = w / 2, cy = h / 2;
       const R = Math.hypot(cx, cy) + 20;
-      const n = ph >= 3 ? 72 : 48;
+      const n = ph >= 3 ? 84 : 56;
       ctx.save();
       ctx.globalCompositeOperation = pal.inv ? 'source-over' : 'lighter';
       for (let i = 0; i < n; i++) {
-        if (Math.random() < 0.35) continue; // 毎フレーム高速明滅
+        if (Math.random() < 0.3) continue; // 毎フレーム高速明滅
         const a = (i / n) * TAU + U.rand(-0.04, 0.04);
-        const inner = R * U.rand(0.6, 0.82);
-        const half = (ph >= 3 ? U.rand(0.012, 0.03) : U.rand(0.004, 0.012));
+        const inner = R * U.rand(ph >= 3 ? 0.56 : 0.64, 0.82);
+        const half = (ph >= 3 ? U.rand(0.013, 0.032) : U.rand(0.005, 0.014));
         ctx.fillStyle = pal.inv ? `rgba(9,10,15,${U.rand(0.08, 0.2)})`
-          : ph >= 3 ? U.rgba(i % 2 ? C.gold : C.crimson, U.rand(0.18, 0.45)) : `rgba(255,255,255,${U.rand(0.08, 0.28)})`;
+          : ph >= 3 ? U.rgba(i % 2 ? C.gold : C.crimson, U.rand(0.24, 0.55)) : U.rgba(i % 3 === 0 ? C.cyan : '#FFFFFF', U.rand(0.12, 0.34));
         ctx.beginPath();
         ctx.moveTo(cx + Math.cos(a) * inner, cy + Math.sin(a) * inner);
         ctx.lineTo(cx + Math.cos(a - half) * R, cy + Math.sin(a - half) * R);
@@ -1308,16 +1405,20 @@
         ctx.closePath();
         ctx.fill();
       }
-      // 鬼神：上下左右の端に燃え盛るネオンフレーム
-      if (ph >= 3 && !pal.inv) {
-        const fl = 0.75 + Math.sin(this.patT * 23) * 0.15 + Math.random() * 0.1;
-        const d = Math.min(w, h) * 0.07 * (1 + this.beat * 0.4);
+      // 画面外周のネオンフレーム（覚醒：シアン＆紅蓮 ／ 鬼神：燃え盛る深紅＆黄金）
+      if (!pal.inv) {
+        const fl = 0.78 + Math.sin(this.patT * 23) * 0.14 + Math.random() * 0.08;
+        const d = Math.min(w, h) * (ph >= 3 ? 0.085 : 0.045) * (1 + this.beat * 0.45);
+        const cOuter = ph >= 3 ? C.crimson : C.cyan;
+        const cMid = ph >= 3 ? C.gold : C.crimson;
+        const oAlpha = (ph >= 3 ? 0.58 : 0.28) * fl;
+        const mAlpha = (ph >= 3 ? 0.32 : 0.12) * fl;
         const edges = [[0, 0, w, d, 0, 0, 0, d], [0, h - d, w, d, 0, h, 0, h - d], [0, 0, d, h, 0, 0, d, 0], [w - d, 0, d, h, w, 0, w - d, 0]];
         for (const e of edges) {
           const g = ctx.createLinearGradient(e[4], e[5], e[6], e[7]);
-          g.addColorStop(0, U.rgba(C.crimson, 0.5 * fl));
-          g.addColorStop(0.4, U.rgba(C.gold, 0.28 * fl));
-          g.addColorStop(1, U.rgba(C.gold, 0));
+          g.addColorStop(0, U.rgba(cOuter, oAlpha));
+          g.addColorStop(0.45, U.rgba(cMid, mAlpha));
+          g.addColorStop(1, U.rgba(cMid, 0));
           ctx.fillStyle = g;
           ctx.fillRect(e[0], e[1], e[2], e[3]);
         }
@@ -1325,7 +1426,7 @@
       ctx.restore();
     }
 
-    /* -------- RGB色収差（赤とシアンを左右にズラした加算描画） -------- */
+    /* -------- RGB色収差（0.5x軽量バッファで赤とシアンを左右オフセット加算） -------- */
     chromatic(px, dur) {
       if (this.ca && this.ca.t < this.ca.dur && this.ca.px > px) return;
       this.ca = { px, t: 0, dur: dur || P.CA_TIME };
@@ -1337,27 +1438,27 @@
       if (ca.t >= ca.dur) { this.ca = null; return; }
       if (this.lowFx) return;
       const k = 1 - ca.t / ca.dur;
-      const px = ca.px * this.dpr * (0.4 + 0.6 * k);
+      const px = ca.px * this.dpr * (0.45 + 0.55 * k);
       const W = this.canvas.width, H = this.canvas.height;
-      const tint = (cv, col) => {
-        const g = cv.getContext('2d');
+      const rw = this.caR.width, rh = this.caR.height;
+      const tint = (g, col) => {
         g.setTransform(1, 0, 0, 1, 0, 0);
         g.globalCompositeOperation = 'copy';
-        g.drawImage(this.canvas, 0, 0);
+        g.drawImage(this.canvas, 0, 0, W, H, 0, 0, rw, rh);
         g.globalCompositeOperation = 'multiply';
         g.fillStyle = col;
-        g.fillRect(0, 0, W, H);
+        g.fillRect(0, 0, rw, rh);
         g.globalCompositeOperation = 'source-over';
       };
-      tint(this.caR, '#FF0000');
-      tint(this.caC, '#00FFFF');
+      tint(this.caRctx, '#FF1E42');
+      tint(this.caCctx, '#00F0FF');
       const ctx = this.ctx;
       ctx.save();
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.globalCompositeOperation = 'lighter';
-      ctx.globalAlpha = 0.5 * k + 0.2;
-      ctx.drawImage(this.caR, px, 0);
-      ctx.drawImage(this.caC, -px, 0);
+      ctx.globalAlpha = 0.52 * k + 0.22;
+      ctx.drawImage(this.caR, 0, 0, rw, rh, px, 0, W, H);
+      ctx.drawImage(this.caC, 0, 0, rw, rh, -px, 0, W, H);
       ctx.restore();
     }
 
@@ -1519,6 +1620,17 @@
       ctx.lineWidth = 8 * dpr;
       ctx.stroke();
       ctx.restore();
+    }
+
+    addBeatRing(phase) {
+      if (phase < 2) return;
+      if (this.beatRings.length >= 4) this.beatRings.shift();
+      this.beatRings.push({
+        t: 0,
+        dur: phase >= 3 ? 0.55 : 0.65,
+        ph: phase,
+        col: phase >= 3 ? (this.beatRings.length % 2 ? C.crimson : C.gold) : C.cyan
+      });
     }
 
     updatePost(dt, game) {
