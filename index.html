@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#07080C">
+  <meta name="description" content="CHAIN SLASH : 絶・一閃 ― CYBER-INK HYPER IAI ACTION">
+  <title>CHAIN SLASH : 絶・一閃</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- ゲームキャンバス（12層レンダリング） -->
+  <canvas id="game-canvas"></canvas>
+
+  <!-- ================= インゲーム HUD ================= -->
+  <div id="hud" class="hud">
+    <!-- 左上：スコア・レベル/XP・HP・奥義ゲージ -->
+    <div class="hud-left">
+      <div class="hud-score-box">
+        <span class="label">SCORE</span>
+        <span id="hud-score" class="hud-score">0</span>
+      </div>
+      <div class="hud-level-row">
+        <span id="hud-level" class="hud-level">Lv 1</span>
+        <div class="bar xp-bar"><div id="hud-xp-fill" class="fill"></div></div>
+      </div>
+      <div id="hud-hp" class="hp-pips"></div>
+      <div class="hud-focus-row">
+        <span class="label">集中</span>
+        <div class="bar focus-bar"><div id="hud-focus-fill" class="fill"></div></div>
+      </div>
+      <div id="hud-ult" class="ult-gauge">
+        <span class="label">奥義</span>
+        <div class="bar ult-bar">
+          <div id="hud-ult-fill" class="fill"></div>
+          <i class="ult-mark"></i>
+        </div>
+        <span id="hud-ult-text" class="ult-text">0%</span>
+      </div>
+    </div>
+
+    <!-- 中央上：ステージ名・タイマー／ボスHP・ボタン -->
+    <div class="hud-center">
+      <div id="hud-stage" class="hud-stage">第1幕</div>
+      <div id="hud-timer-box" class="hud-timer-box">
+        <span id="hud-timer" class="hud-timer">03:00</span>
+      </div>
+      <div id="hud-boss" class="hud-boss">
+        <div id="hud-boss-name" class="boss-name">BOSS</div>
+        <div class="bar boss-bar"><div id="hud-boss-fill" class="fill"></div></div>
+        <div id="hud-boss-cores" class="boss-cores"></div>
+      </div>
+      <div class="hud-buttons">
+        <button id="btn-mute" class="icon-btn mute-btn" aria-label="音量">♪ ON</button>
+        <button id="btn-pause" class="icon-btn" aria-label="ポーズ">Ⅱ</button>
+      </div>
+    </div>
+
+    <!-- 右上：スタイルランク・コンボ -->
+    <div class="hud-right">
+      <div class="rank-row">
+        <div id="hud-rank" class="rank-badge rank-C">C</div>
+        <div id="hud-rank-name" class="rank-name">抜刀 BATTO</div>
+      </div>
+      <div id="hud-combo" class="hud-combo">0<small> CHAIN</small></div>
+      <div class="bar combo-bar"><div id="hud-combo-fill" class="fill"></div></div>
+      <div id="hud-phase" class="phase phase-1">PHASE 1：通常</div>
+    </div>
+
+    <!-- 左下：習得スキル -->
+    <div id="hud-skills" class="hud-skills"></div>
+
+    <!-- 中央下：奥義発動ボタン -->
+    <button id="btn-ult" class="ult-btn">
+      <span class="ult-name">第壱奥義 千本桜・墨嵐</span>
+      <span class="ult-key"><span class="k-desk">奥義発動（SPACE / 右クリック）</span><span class="k-touch">タップで奥義発動</span></span>
+    </button>
+  </div>
+
+  <!-- ================= タイトル＆ステージ選択 ================= -->
+  <div id="screen-title" class="screen title-screen">
+    <div class="title-inner">
+      <div class="logo">
+        <div class="logo-sub-top">CHAIN SLASH</div>
+        <h1 class="logo-main"><span class="ink">絶</span><span class="dot">・</span><span class="ink">一閃</span></h1>
+        <div class="logo-sub">CYBER-INK HYPER IAI ACTION</div>
+      </div>
+      <div class="records">
+        <div><span>ハイスコア</span><b id="title-high">0</b></div>
+        <div><span>最大チェイン</span><b id="title-chain">0</b></div>
+        <div><span>装備</span><b id="title-blade">無銘・白夜</b></div>
+      </div>
+      <div id="stage-cards" class="stage-cards"></div>
+      <div class="title-actions">
+        <button id="btn-dojo" class="btn gold">鍛冶場・道場 <small>（刀変更・永続強化）</small> <span class="coin">魂貨 <b id="title-coins">0</b> 両</span></button>
+        <button id="btn-mute-title" class="btn ghost mute-btn">♪ ON</button>
+      </div>
+      <div class="howto">
+        <div><b>短く弾く／クリック</b>【迅雷】敵へ突進斬り。命中で0.35秒チェイン受付</div>
+        <div><b>長押し＋なぞる</b>【居合】時間停止で一筆書きロック → 離して斬り抜け＆同時爆砕</div>
+        <div><b>SPACE／右クリック／奥義ボタン</b>奥義（100%：千本桜・墨嵐 ／ 200%：絶・虚空一文字）</div>
+        <div><b>WASD・矢印</b>移動　<b>ESC／P</b>ポーズ　<b>M</b>ミュート　<b>1/2/3</b>スキル選択</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= 鍛冶場・道場 ================= -->
+  <div id="screen-dojo" class="screen dojo-screen">
+    <div class="panel dojo-panel">
+      <div class="panel-head">
+        <h2>鍛冶場・道場 <small>ARMORY &amp; DOJO</small></h2>
+        <div class="coin big">所持魂貨 <b id="dojo-coins">0</b> 両</div>
+        <button id="btn-dojo-close" class="icon-btn close" aria-label="閉じる">✕</button>
+      </div>
+      <h3 class="section-title">四振りの刀</h3>
+      <div id="dojo-blades" class="blade-grid"></div>
+      <h3 class="section-title">道場鍛錬（永続強化）</h3>
+      <div id="dojo-upgrades" class="upgrade-list"></div>
+    </div>
+  </div>
+
+  <!-- ================= レベルアップ（3択） ================= -->
+  <div id="screen-levelup" class="screen levelup-screen">
+    <div class="levelup-inner">
+      <h2 id="levelup-title" class="levelup-title">LEVEL UP!!</h2>
+      <div class="levelup-hint">技を一つ選べ（1 / 2 / 3 キー or タップ）</div>
+      <div id="levelup-cards" class="skill-cards"></div>
+    </div>
+  </div>
+
+  <!-- ================= リザルト ================= -->
+  <div id="screen-result" class="screen result-screen">
+    <div class="panel result-panel">
+      <h2 id="result-title" class="result-title">幕　踏　破</h2>
+      <div id="result-sub" class="result-sub"></div>
+      <div id="result-stats" class="result-stats"></div>
+      <div class="result-total">所持魂貨 <b id="result-total-coins">0</b> 両</div>
+      <div class="result-actions">
+        <button id="btn-result-next" class="btn gold">次の幕へ進む</button>
+        <button id="btn-result-dojo" class="btn">鍛冶場・道場で強化する</button>
+        <button id="btn-result-retry" class="btn crimson">もう一度斬る</button>
+        <button id="btn-result-title" class="btn ghost">タイトルへ</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= ポーズ ================= -->
+  <div id="screen-pause" class="screen pause-screen">
+    <div class="panel pause-panel">
+      <h2>一時停止</h2>
+      <button id="btn-resume" class="btn gold">再開する</button>
+      <button id="btn-pause-retry" class="btn crimson">リトライ</button>
+      <button id="btn-pause-title" class="btn ghost">タイトルへ</button>
+    </div>
+  </div>
+
+  <!-- ================= カットイン（WARNING / FINISH HIM / 奥義） ================= -->
+  <div id="cutin" class="cutin"></div>
+
+  <noscript><div class="noscript">JavaScript を有効にしてください。</div></noscript>
+
+  <script defer src="js/config.js"></script>
+  <script defer src="js/audio.js"></script>
+  <script defer src="js/effects.js"></script>
+  <script defer src="js/entities.js"></script>
+  <script defer src="js/main.js"></script>
+</body>
+</html>
