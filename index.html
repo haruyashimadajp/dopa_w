@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>CHAIN SLASH : 絶・一閃 (ZETSU-ISSEN) — サイバー墨絵×無限居合アクション</title>
+  <meta name="description" content="短フリックで迅雷ピンボール連撃、長押しで時間停止一筆書き＆0.22秒光速納刀同時爆砕！コンボで画面と音楽がトランス進化する超爽快和風サイバーアクション。" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="game-container">
+    <canvas id="game-canvas"></canvas>
+
+    <!-- ==========================================
+         IN-GAME HUD OVERLAY
+         ========================================== -->
+    <header id="hud" class="hud-hidden">
+      <!-- Top-Left: Score, HP, Focus/Charge, XP, Ultimate Gauge -->
+      <div class="hud-left">
+        <div class="score-block">
+          <div class="stat-line">
+            <span class="hud-label">SCORE</span>
+            <span id="hud-score" class="hud-score-val">0</span>
+          </div>
+          <div class="stat-subline">
+            <span class="hud-label-sm">BEST</span>
+            <span id="hud-best" class="hud-gold-sm">0</span>
+            <span class="hud-label-sm" style="margin-left:10px;">魂貨</span>
+            <span id="hud-coins" class="hud-gold-sm">0両</span>
+          </div>
+        </div>
+
+        <!-- HP Shield Pips -->
+        <div class="hp-row">
+          <span class="hud-label-sm">命盾</span>
+          <div id="hp-container" class="hp-pips"></div>
+        </div>
+
+        <!-- Thunder Charge Stacks (Action B -> Action A Synergy) -->
+        <div class="charge-row">
+          <span class="hud-label-sm">迅雷帯電</span>
+          <div id="charge-pips" class="charge-pips">
+            <div class="charge-pip"></div>
+            <div class="charge-pip"></div>
+            <div class="charge-pip"></div>
+          </div>
+          <span id="charge-bonus-text" class="charge-bonus-text">居合威力 ×1.0</span>
+        </div>
+
+        <!-- Level / XP Bar -->
+        <div class="gauge-wrap">
+          <div class="gauge-header">
+            <span id="hud-level">LV.1 抜刀剣士</span>
+            <span id="hud-xp-text">0 / 8</span>
+          </div>
+          <div class="gauge-track">
+            <div id="hud-xp-fill" class="gauge-fill xp-fill"></div>
+          </div>
+        </div>
+
+        <!-- 2-Tier Ultimate Gauge (0% -> 100% -> 200%) -->
+        <div class="gauge-wrap ult-gauge-wrap">
+          <div class="gauge-header">
+            <span id="hud-ult-label">奥義ゲージ</span>
+            <span id="hud-ult-pct">0%</span>
+          </div>
+          <div class="gauge-track ult-track">
+            <div id="hud-ult-fill-100" class="gauge-fill ult-fill-100"></div>
+            <div id="hud-ult-fill-200" class="gauge-fill ult-fill-200"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Top-Center: Stage Timer, Boss HP Bar, Scroll Jackpot Slot, Quick Controls -->
+      <div class="hud-center">
+        <div class="top-btn-bar">
+          <button id="btn-sound" class="hud-btn" type="button">🔊 音響 ON</button>
+          <button id="btn-retry-quick" class="hud-btn" type="button">↻ 即再戦 (R)</button>
+          <button id="btn-to-title" class="hud-btn" type="button">🏯 幕選択・道場</button>
+        </div>
+
+        <div id="stage-info-box" class="stage-info-box">
+          <div id="hud-stage-name" class="stage-name-text">第1幕：竹林サイバー城下町</div>
+          <div id="hud-timer" class="stage-timer-text">03:00</div>
+        </div>
+
+        <!-- Boss HP & Weak Cores Bar (Shown during Boss Fight) -->
+        <div id="boss-hud" class="boss-hud hidden">
+          <div class="boss-header">
+            <span id="boss-name-text" class="boss-name-text">からくり大百足・黒鉄</span>
+            <span id="boss-break-hint" class="boss-break-hint">★ 全弱点核を一筆書きで繋いで【部位全破壊 ALL BREAK!!】</span>
+          </div>
+          <div class="boss-hp-track">
+            <div id="boss-hp-fill" class="boss-hp-fill"></div>
+          </div>
+          <div id="boss-cores-row" class="boss-cores-row"></div>
+        </div>
+
+        <!-- Non-Pausing Scroll Jackpot Slot Machine Banner -->
+        <div id="jackpot-banner" class="jackpot-banner hidden">
+          <div class="jackpot-title">📜 秘伝開眼スロット！！</div>
+          <div id="jackpot-reel" class="jackpot-reel">回転中...</div>
+        </div>
+      </div>
+
+      <!-- Top-Right: Style Rank Badge, Evolution Phase, Huge Combo Counter -->
+      <div class="hud-right">
+        <div id="rank-box" class="rank-box rank-c">
+          <div class="rank-top-row">
+            <span class="rank-prefix">STYLE</span>
+            <span id="hud-rank-title" class="rank-title">抜刀</span>
+          </div>
+          <div id="hud-rank-letter" class="rank-letter">C</div>
+          <div id="hud-phase-badge" class="phase-badge">Phase 1 : 通常</div>
+        </div>
+
+        <div id="combo-container" class="combo-container">
+          <div class="combo-num-row">
+            <span id="hud-combo-num" class="combo-num">0</span>
+            <span class="combo-unit">CHAIN</span>
+          </div>
+          <div class="combo-timer-track">
+            <div id="hud-combo-timer" class="combo-timer-fill"></div>
+          </div>
+          <div id="hud-multiplier" class="combo-mult-text">SCORE &amp; 魂 ×1.0</div>
+        </div>
+      </div>
+    </header>
+
+    <!-- Bottom-Left: Equipped Blade & Active Skills Strip -->
+    <div id="skill-strip" class="skill-strip"></div>
+
+    <!-- Bottom-Center: Interactive Ultimate Trigger Button -->
+    <div id="ult-btn-wrap" class="ult-btn-wrap hidden">
+      <button id="btn-ult-trigger" class="ult-trigger-btn" type="button">
+        <span id="ult-btn-sub" class="ult-btn-sub">SPACE / 右クリック / タップで発動</span>
+        <span id="ult-btn-title" class="ult-btn-title">第壱奥義：千本桜・墨嵐 (100%)</span>
+      </button>
+    </div>
+
+    <!-- Bottom-Right: Control Guide -->
+    <div id="control-guide" class="control-guide">
+      <span>【短フリック】迅雷連撃＆刀帯電</span>
+      <span class="sep">｜</span>
+      <span>【長押しなぞり】時間停止・ダイレクト一筆書き爆砕</span>
+      <span class="sep">｜</span>
+      <span>【敵弾かすり】見切り急速チャージ</span>
+    </div>
+
+    <!-- ==========================================
+         MODAL 1: TITLE & STAGE SELECT
+         ========================================== -->
+    <section id="title-overlay" class="overlay">
+      <div class="modal-card title-card">
+        <div class="eyebrow">CYBER-INK HYPER IAI ACTION — v2.0</div>
+        <h1 class="main-title">CHAIN SLASH : 絶・一閃</h1>
+        <p class="subtitle-copy">
+          短く弾いて<strong>【迅雷ピンボール連撃＆刀帯電】</strong>、長押しで時間を止め<strong>【ダイレクト一筆書き＆0.22秒光速納刀爆砕】</strong>！<br/>
+          コンボを重ねて<strong>鬼神（SSS）トランス・空間次元斬・200%虚空一文字</strong>を解き放て。
+        </p>
+
+        <div class="title-stats-bar">
+          <div>HIGH SCORE: <strong id="title-highscore" class="gold-text">0</strong></div>
+          <div>MAX CHAIN: <strong id="title-maxchain" class="cyan-text">0</strong></div>
+          <div>所持魂貨: <strong id="title-coins" class="gold-text">0両</strong></div>
+          <div>装備刀: <strong id="title-blade-name" class="cyan-text">無銘・白夜</strong></div>
+        </div>
+
+        <!-- Stage Selection Grid -->
+        <div class="stage-select-grid" id="stage-select-grid"></div>
+
+        <!-- Action Buttons -->
+        <div class="title-action-row">
+          <button id="btn-open-dojo" class="secondary-btn" type="button">
+            <span>⚔️ 鍛冶場・道場（刀解放＆永続強化）</span>
+          </button>
+          <button id="btn-start-game" class="primary-btn" type="button">
+            <span>抜刀出陣 — START SLASHING</span>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==========================================
+         MODAL 2: ARMORY & DOJO (刀4種 & 道場6項目)
+         ========================================== -->
+    <section id="dojo-overlay" class="overlay hidden">
+      <div class="modal-card dojo-card">
+        <div class="dojo-top-bar">
+          <div>
+            <div class="eyebrow">ARMORY &amp; DOJO</div>
+            <h2 class="modal-title">鍛冶場・道場 — 名刀解放＆永続鍛錬</h2>
+          </div>
+          <div class="dojo-coin-box">
+            <span>所持魂貨: <strong id="dojo-coins" class="gold-text" style="font-size:22px;">0両</strong></span>
+            <button id="btn-gift-coins" class="mini-gold-btn" type="button" title="すぐに全ての刀や強化を試したい方向け">+5,000両 試遊支給</button>
+          </div>
+        </div>
+
+        <h3 class="section-heading">壱. 名刀・妖刀の選択と解放（全4振り）</h3>
+        <div id="blade-grid" class="blade-grid"></div>
+
+        <h3 class="section-heading">弐. 道場・常時ステータス鍛錬（全6項目 / 最大Lv.5）</h3>
+        <div id="dojo-grid" class="dojo-grid"></div>
+
+        <div class="modal-footer-row">
+          <button id="btn-close-dojo" class="primary-btn" type="button">
+            <span>支度完了 — 幕選択へ戻る</span>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==========================================
+         MODAL 3: LEVEL UP & AWAKENING (0.45s Anti-Misclick Guard)
+         ========================================== -->
+    <section id="levelup-overlay" class="overlay hidden">
+      <div class="modal-card levelup-card">
+        <div class="eyebrow" style="color:var(--neon-gold);">SOUL AWAKENING — 奥義習得</div>
+        <h2 class="modal-title">魂の覚醒 — 強化する奥義を1つ選択</h2>
+        <div class="guard-bar-wrap">
+          <div id="levelup-guard-text" class="guard-text">誤タップ防止ロック中...</div>
+          <div class="guard-track">
+            <div id="levelup-guard-fill" class="guard-fill"></div>
+          </div>
+        </div>
+        <div id="upgrade-grid" class="upgrade-grid"></div>
+      </div>
+    </section>
+
+    <!-- ==========================================
+         MODAL 4: STAGE CLEAR / GAME OVER RESULT
+         ========================================== -->
+    <section id="result-overlay" class="overlay hidden">
+      <div class="modal-card result-card">
+        <div id="result-eyebrow" class="eyebrow">STAGE CLEAR</div>
+        <h2 id="result-title" class="modal-title" style="font-size:34px;">見事・敵将討ち取ったり！！</h2>
+        <p id="result-subtitle" class="subtitle-copy" style="margin-bottom:16px;"></p>
+
+        <div class="result-grid">
+          <div class="result-box">
+            <div class="res-label">FINAL SCORE</div>
+            <div id="res-score" class="res-val gold-text">0</div>
+          </div>
+          <div class="result-box">
+            <div class="res-label">MAX CHAIN</div>
+            <div id="res-chain" class="res-val cyan-text">0</div>
+          </div>
+          <div class="result-box">
+            <div class="res-label">TOTAL KILLS</div>
+            <div id="res-kills" class="res-val">0</div>
+          </div>
+          <div class="result-box">
+            <div class="res-label">獲得魂貨</div>
+            <div id="res-coins" class="res-val gold-text">+0両</div>
+          </div>
+        </div>
+
+        <div class="title-action-row">
+          <button id="btn-result-dojo" class="secondary-btn" type="button">
+            <span>⚔️ 鍛冶場・道場で強化</span>
+          </button>
+          <button id="btn-result-retry" class="primary-btn" type="button">
+            <span id="btn-result-next-label">もう一度斬る — RETRY (SPACE)</span>
+          </button>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- 7-File Modular Architecture (Strict Load Order) -->
+  <script defer src="js/config.js"></script>
+  <script defer src="js/audio.js"></script>
+  <script defer src="js/effects.js"></script>
+  <script defer src="js/entities.js"></script>
+  <script defer src="js/main.js"></script>
+</body>
+</html>
