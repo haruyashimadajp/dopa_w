@@ -7,12 +7,14 @@
   color-scheme: dark;
   --bg-ink-deep: #07080C;
   --bg-ink-slow: #030406;
-  --decal-ink: rgba(18, 22, 32, 0.75);
-  --blade-white: #F8FAFC;
+  --decal-ink: rgba(22, 26, 38, 0.8);
+  --blade-white: #FFFFFF;
   --blade-glow: #00F0FF;
   --neon-crimson: #FF1E42;
   --neon-gold: #FFBE2E;
-  --neon-jade: #00E5A3;
+  --neon-jade: #00F5A8;
+  --bg-ink-awaken: #120610;
+  --bg-ink-kishin: #1A0914;
   --neon-cyan: #00F0FF;
   --void-slash: #FFFFFF;
   --ui-panel: rgba(10, 12, 18, 0.88);
@@ -354,6 +356,54 @@ button {
 }
 @keyframes ultBtn { from { filter: brightness(1); } to { filter: brightness(1.35); } }
 
+/* ---------------------------------------------------------------- 秘伝開眼スロット */
+.slot {
+  position: absolute;
+  top: calc(118px + var(--safe-t));
+  left: 50%;
+  transform: translate(-50%, -30px) scale(0.9);
+  opacity: 0;
+  pointer-events: none;
+  min-width: 300px;
+  padding: 10px 22px 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  background: linear-gradient(180deg, rgba(70, 10, 18, 0.95), rgba(20, 6, 6, 0.95));
+  border: 2px solid var(--neon-gold);
+  box-shadow: 0 0 30px rgba(255, 190, 46, 0.45), inset 0 0 20px rgba(255, 190, 46, 0.2);
+  clip-path: polygon(14px 0, calc(100% - 14px) 0, 100% 50%, calc(100% - 14px) 100%, 14px 100%, 0 50%);
+  transition: opacity 0.2s, transform 0.25s cubic-bezier(.2, 1.4, .4, 1);
+}
+.slot.show { opacity: 1; transform: translate(-50%, 0) scale(1); }
+.slot-title { font-family: var(--font-brush); font-size: 15px; font-weight: 900; color: var(--neon-gold); letter-spacing: 0.15em; text-shadow: 0 0 10px var(--neon-gold); }
+.slot-reels { display: flex; gap: 8px; }
+.reel {
+  width: 48px;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-brush);
+  font-size: 32px;
+  font-weight: 900;
+  color: #fff;
+  background: linear-gradient(180deg, #0B0C12, #1E1E2A 50%, #0B0C12);
+  border: 1px solid rgba(255, 190, 46, 0.5);
+}
+.slot.spinning .reel:not(.stopped) { filter: blur(1.5px); color: rgba(255, 255, 255, 0.75); }
+.reel.stopped { color: var(--neon-gold); text-shadow: 0 0 12px var(--neon-gold); animation: reelStop 0.18s ease-out; }
+@keyframes reelStop { from { transform: translateY(-6px); } to { transform: none; } }
+.slot-result { font-family: var(--font-brush); font-size: 22px; font-weight: 900; min-height: 0; }
+.slot-result:empty, .slot-detail:empty { display: none; }
+.slot-detail { font-size: 11px; color: var(--text); max-width: 320px; text-align: center; line-height: 1.5; }
+.slot.win-issen .slot-result { color: var(--neon-cyan); text-shadow: 0 0 12px var(--neon-cyan); }
+.slot.win-niten .slot-result { color: var(--neon-gold); text-shadow: 0 0 14px var(--neon-gold); }
+.slot.win-kishin { animation: slotJackpot 0.25s steps(2) 6; }
+.slot.win-kishin .slot-result { color: var(--neon-crimson); text-shadow: 0 0 16px var(--neon-crimson), 0 0 30px var(--neon-gold); font-size: 26px; }
+@keyframes slotJackpot { 50% { box-shadow: 0 0 60px var(--neon-crimson), inset 0 0 30px var(--neon-gold); filter: brightness(1.4); } }
+
 /* ---------------------------------------------------------------- タイトル */
 .title-screen {
   background: radial-gradient(ellipse at 50% 30%, rgba(7, 8, 12, 0.2), rgba(3, 4, 6, 0.75) 75%);
@@ -437,7 +487,14 @@ button {
 .stage-card.shake { animation: shake 0.35s; }
 @keyframes shake { 20%, 60% { transform: translateX(-6px); } 40%, 80% { transform: translateX(6px); } }
 
-.title-actions { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+.title-actions { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; align-items: center; }
+.ex-switch { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 12px; color: var(--text-dim); }
+.ex-switch input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.ex-track { width: 38px; height: 20px; border: 1px solid var(--ui-border); background: rgba(10, 12, 18, 0.9); position: relative; transition: background 0.2s; }
+.ex-knob { position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; background: var(--text-dim); transition: transform 0.2s, background 0.2s; }
+.ex-switch input:checked + .ex-track { background: rgba(255, 30, 66, 0.35); border-color: var(--neon-crimson); }
+.ex-switch input:checked + .ex-track .ex-knob { transform: translateX(18px); background: var(--neon-crimson); box-shadow: 0 0 8px var(--neon-crimson); }
+.ex-switch input:focus-visible + .ex-track { outline: 2px solid var(--neon-cyan); outline-offset: 2px; }
 .title-actions .btn.gold { padding: 14px 26px; font-size: 16px; }
 .title-actions .coin { margin-left: 8px; font-size: 13px; }
 .howto {
@@ -519,6 +576,19 @@ button {
 .levelup-title { font-size: clamp(30px, 6vw, 52px); font-weight: 900; font-style: italic; color: var(--neon-jade); text-shadow: 0 0 20px var(--neon-jade), 0 3px 0 #000; animation: popIn 0.4s cubic-bezier(.2, 1.5, .4, 1); }
 .levelup-hint { font-size: 13px; color: var(--text-dim); letter-spacing: 0.1em; }
 .skill-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; width: 100%; margin-top: 8px; }
+.levelup-lock { display: flex; align-items: center; gap: 10px; width: min(360px, 90%); }
+.levelup-lock-bar { flex: 1; height: 6px; background: rgba(255, 190, 46, 0.12); border: 1px solid rgba(255, 190, 46, 0.4); transform: skewX(-20deg); overflow: hidden; }
+.levelup-lock-bar .fill { height: 100%; width: 0; background: linear-gradient(90deg, #8A5C08, var(--neon-gold)); box-shadow: 0 0 8px var(--neon-gold); }
+.levelup-lock-label { font-size: 12px; font-weight: 800; color: var(--neon-gold); min-width: 120px; }
+/* 0.45秒ロック中：カードは下からスライドイン、ロック解除で枠が発光 */
+.levelup-screen .skill-card { pointer-events: none; filter: saturate(0.6) brightness(0.8); animation: cardSlide 0.42s cubic-bezier(.2, 1.1, .3, 1) backwards; }
+.levelup-screen .skill-card:nth-child(2) { animation-delay: 0.04s; }
+.levelup-screen .skill-card:nth-child(3) { animation-delay: 0.08s; }
+.levelup-screen.unlocked .skill-card { pointer-events: auto; filter: none; animation: cardGlow 0.5s ease-out; }
+.levelup-screen.unlocked .skill-card:not(.awaken) { border-color: var(--neon-cyan); box-shadow: 0 0 22px rgba(0, 240, 255, 0.35); }
+.levelup-screen.unlocked .levelup-lock-label { color: var(--neon-jade); text-shadow: 0 0 10px var(--neon-jade); }
+@keyframes cardSlide { from { opacity: 0; transform: translateY(80px) scale(0.92); } to { opacity: 1; transform: none; } }
+@keyframes cardGlow { 0% { box-shadow: 0 0 0 rgba(0, 240, 255, 0); } 40% { box-shadow: 0 0 40px rgba(0, 240, 255, 0.8); } 100% { box-shadow: 0 0 22px rgba(0, 240, 255, 0.35); } }
 .skill-card {
   position: relative;
   min-height: 250px;
@@ -691,6 +761,8 @@ button {
   .ult-btn { min-width: 0; padding: 8px 22px; }
   .ult-btn .ult-name { font-size: 14px; white-space: nowrap; }
   .hud-skills { bottom: calc(80px + var(--safe-b)); max-width: 70vw; }
+  .slot { top: calc(150px + var(--safe-t)); min-width: 260px; }
+  .reel { width: 40px; height: 44px; font-size: 26px; }
   .ult-btn .ult-name { font-size: 15px; }
   .result-actions { grid-template-columns: 1fr; }
   .stage-card { min-height: 120px; }

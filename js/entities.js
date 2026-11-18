@@ -73,22 +73,35 @@
         this.x = U.lerp(d.x0, d.x1, e);
         this.y = U.lerp(d.y0, d.y1, e);
         if (p >= 1) { finished = d; this.dash = null; }
-      } else if (game.canMove()) {
-        // キーボード移動（WASD／矢印）
+      } else if (game.canMove() && game.input.mode !== 'iaiDash' && game.input.mode !== 'sheathe') {
+        // 非攻撃時のスムーズ移動：WASD／矢印を優先、なければカーソル追従（PC）／ドラッグ方向（タッチ）
         const k = game.input.keys;
         let mx = 0, my = 0;
         if (k.left) mx -= 1;
         if (k.right) mx += 1;
         if (k.up) my -= 1;
         if (k.down) my += 1;
+        const sp = P.PLAYER_MOVE_SPEED * game.moveSpeedMult();
+        let tvx = 0, tvy = 0;
         if (mx || my) {
           const l = Math.hypot(mx, my);
-          const sp = P.PLAYER_MOVE_SPEED * game.moveSpeedMult();
-          this.vx = (mx / l) * sp; this.vy = (my / l) * sp;
-          this.facing = Math.atan2(my, mx);
+          tvx = (mx / l) * sp; tvy = (my / l) * sp;
         } else {
-          this.vx *= Math.exp(-12 * dt); this.vy *= Math.exp(-12 * dt);
+          const ht = game.hoverTarget();
+          if (ht) {
+            const dx = ht.x - this.x, dy = ht.y - this.y;
+            const d = Math.hypot(dx, dy);
+            if (d > P.HOVER_STOP_DIST) {
+              // カーソルとの距離18px以内で停止、手前で滑らかに減速
+              const s2 = sp * Math.min(1, (d - P.HOVER_STOP_DIST) / 46);
+              tvx = (dx / d) * s2; tvy = (dy / d) * s2;
+            }
+          }
         }
+        const kk = Math.min(1, dt * 14);
+        this.vx += (tvx - this.vx) * kk;
+        this.vy += (tvy - this.vy) * kk;
+        if (Math.hypot(this.vx, this.vy) > 20) this.facing = Math.atan2(this.vy, this.vx);
         this.x += this.vx * dt; this.y += this.vy * dt;
       }
       const m = 16;
@@ -233,19 +246,77 @@
 
       this._drawHat(ctx, pal, this.x, this.y, 1);
 
-      // 集中ゲージリング（半径22px）
+      // 迅雷帯電：刀と外周に黄金の電撃オーラ（スタック数に比例）
+      const ch = game.charge || 0;
+      if (ch > 0) {
+        ctx.save();
+        ctx.globalCompositeOperation = pal.inv ? 'source-over' : 'lighter';
+        const R0 = P.PLAYER_RING_RADIUS + 6;
+        ctx.fillStyle = colA(pal, C.gold, 0.08 + ch * 0.06 + Math.random() * 0.05);
+        ctx.beginPath(); ctx.arc(this.x, this.y, R0 + ch * 5, 0, TAU); ctx.fill();
+        for (let i = 0; i < ch * 3; i++) {
+          const a0 = Math.random() * TAU;
+          ctx.strokeStyle = pal.inv ? C.crimson : (i % 2 ? '#FFFFFF' : C.gold);
+          ctx.lineWidth = 1.4;
+          ctx.beginPath();
+          let r = R0 - 4;
+          ctx.moveTo(this.x + Math.cos(a0) * r, this.y + Math.sin(a0) * r);
+          for (let k = 1; k <= 4; k++) {
+            r = R0 + k * (2 + ch * 1.5) + U.rand(-3, 3);
+            const aa = a0 + k * 0.18 + U.rand(-0.15, 0.15);
+            ctx.lineTo(this.x + Math.cos(aa) * r, this.y + Math.sin(aa) * r);
+          }
+          ctx.stroke();
+        }
+        // 帯電ピップ
+        for (let i = 0; i < P.CHARGE_MAX; i++) {
+          const a = -Math.PI / 2 + (i - 1) * 0.42;
+          const px = this.x + Math.cos(a) * (R0 + 14), py = this.y + Math.sin(a) * (R0 + 14);
+          ctx.fillStyle = i < ch ? (pal.inv ? C.crimson : C.gold) : 'rgba(255,190,46,0.15)';
+          ctx.beginPath(); ctx.moveTo(px, py - 5); ctx.lineTo(px + 3, py); ctx.lineTo(px, py + 5); ctx.lineTo(px - 3, py); ctx.closePath(); ctx.fill();
+        }
+        ctx.restore();
+      }
+
+      // 集中ゲージリング（半径22px）／息切れ中は赤く点滅
       const f = game.focus / game.focusMax();
+      const oh = game.overheat > 0;
       ctx.save();
       ctx.lineCap = 'round';
       ctx.strokeStyle = pal.inv ? 'rgba(9,10,15,0.15)' : 'rgba(255,255,255,0.08)';
       ctx.lineWidth = 3;
       ctx.beginPath(); ctx.arc(this.x, this.y, P.PLAYER_RING_RADIUS, 0, TAU); ctx.stroke();
-      const ringCol = f < 0.25 ? C.crimson : game.input.mode === 'aim' ? C.cyan : (pal.inv ? C.ink : '#8FF8FF');
-      ctx.strokeStyle = pal.inv ? (f < 0.25 ? C.crimson : C.ink) : ringCol;
-      ctx.lineWidth = game.input.mode === 'aim' ? 3.5 : 2.5;
-      ctx.beginPath();
-      ctx.arc(this.x, this.y, P.PLAYER_RING_RADIUS, -Math.PI / 2, -Math.PI / 2 + TAU * f);
-      ctx.stroke();
+      if (oh) {
+        const blink = Math.floor(game.realTime * 14) % 2 === 0;
+        ctx.strokeStyle = blink ? C.crimson : 'rgba(255,30,66,0.25)';
+        ctx.lineWidth = 3.5;
+        ctx.beginPath(); ctx.arc(this.x, this.y, P.PLAYER_RING_RADIUS, 0, TAU); ctx.stroke();
+        ctx.font = '800 12px "Hiragino Sans","Yu Gothic","Noto Sans JP",sans-serif';
+        ctx.textAlign = 'center';
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = pal.inv ? '#fff' : '#000';
+        ctx.strokeText('息切れ...', this.x, this.y - 34);
+        ctx.fillStyle = C.crimson;
+        ctx.fillText('息切れ...', this.x, this.y - 34);
+      } else {
+        const ringCol = f < 0.25 ? C.crimson : game.input.mode === 'aim' ? C.cyan : (pal.inv ? C.ink : '#8FF8FF');
+        ctx.strokeStyle = pal.inv ? (f < 0.25 ? C.crimson : C.ink) : ringCol;
+        ctx.lineWidth = game.input.mode === 'aim' ? 3.5 : 2.5;
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, P.PLAYER_RING_RADIUS, -Math.PI / 2, -Math.PI / 2 + TAU * f);
+        ctx.stroke();
+        // 迅雷1回分の消費量マーカー
+        const cost = game.flickCost ? game.flickCost() / game.focusMax() : 0;
+        if (cost > 0 && f >= cost) {
+          ctx.strokeStyle = pal.inv ? 'rgba(9,10,15,0.5)' : 'rgba(255,255,255,0.55)';
+          ctx.lineWidth = 1;
+          const a = -Math.PI / 2 + TAU * (f - cost);
+          ctx.beginPath();
+          ctx.moveTo(this.x + Math.cos(a) * (P.PLAYER_RING_RADIUS - 4), this.y + Math.sin(a) * (P.PLAYER_RING_RADIUS - 4));
+          ctx.lineTo(this.x + Math.cos(a) * (P.PLAYER_RING_RADIUS + 4), this.y + Math.sin(a) * (P.PLAYER_RING_RADIUS + 4));
+          ctx.stroke();
+        }
+      }
       ctx.restore();
 
       // 納刀の白い十字閃光
@@ -292,13 +363,42 @@
       this.dead = false;
       this.isEnemy = true;
       this.pullX = 0; this.pullY = 0;
+      this.form = null;         // 所属フォーメーション
+      this.slot = 0;
+      this.grazeIn = false;     // 見切り判定帯の内側にいるか
+      this.grazeCd = 0;
+      this.knockX = 0; this.knockY = 0;
     }
     get lockable() { return !this.dead && this.age > 0.05; }
     update(dt, game) {
       this.age += dt;
       if (this.hitFlash > 0) this.hitFlash -= dt;
+      if (this.grazeCd > 0) this.grazeCd -= dt;
       if (this.pending) return;
+      // 死体ボウリングのノックバック
+      if (this.knockX || this.knockY) {
+        this.x += this.knockX * dt; this.y += this.knockY * dt;
+        const kd = Math.exp(-7 * dt);
+        this.knockX *= kd; this.knockY *= kd;
+        if (Math.abs(this.knockX) + Math.abs(this.knockY) < 5) { this.knockX = 0; this.knockY = 0; }
+      }
       if (this.paralyze > 0) { this.paralyze -= dt; return; }
+      if (this.form && !this.form.done) {
+        const sp = this.form.slotPos(this.slot, this);
+        if (sp) {
+          // 陣形スロットへ吸着（陣形を美しく保つ）
+          const dx = sp.x - this.x, dy = sp.y - this.y;
+          const d = Math.hypot(dx, dy);
+          const v = Math.min(d / Math.max(dt, 1e-4), Math.max(this.speed * 2.4, d * 8));
+          if (d > 0.01) { this.vx = dx / d * v; this.vy = dy / d * v; this.x += this.vx * dt; this.y += this.vy * dt; }
+          this.rot += dt * 1.5;
+          this.anchored = true;
+          if (this.formBehave) this.behavior(dt, game);
+          this.anchored = false;
+          return;
+        }
+        this.form = null;
+      }
       this.behavior(dt, game);
       if (this.pullX || this.pullY) {
         this.x += this.pullX * dt; this.y += this.pullY * dt;
@@ -419,6 +519,7 @@
       this.shots = 0;
       this.aimAng = 0;
       this.bulletSpeed = 230 * ((opts && opts.bulletMult) || 1);
+      this.formBehave = true;
     }
     behavior(dt, game) {
       const pl = game.player;
@@ -426,9 +527,9 @@
       const onScreen = this.x > 20 && this.x < game.w - 20 && this.y > 20 && this.y < game.h - 20;
       this.st += dt;
       if (this.state === 'move') {
-        this.seek(dt, pl.x, pl.y, this.speed);
+        if (!this.anchored) this.seek(dt, pl.x, pl.y, this.speed);
         this.aimAng = Math.atan2(pl.y - this.y, pl.x - this.x);
-        if (d < 330 && onScreen && this.st > 0.6) { this.state = 'aim'; this.st = 0; }
+        if (d < (this.anchored ? 460 : 330) && onScreen && this.st > 0.6) { this.state = 'aim'; this.st = 0; }
       } else if (this.state === 'aim') {
         this.aimAng = Math.atan2(pl.y - this.y, pl.x - this.x);
         if (this.st >= 0.9) { this.state = 'fire'; this.st = 0; this.shots = 0; }
@@ -440,7 +541,7 @@
         }
         if (this.shots >= 3) { this.state = 'cool'; this.st = 0; }
       } else if (this.state === 'cool') {
-        if (d > 360) this.seek(dt, pl.x, pl.y, this.speed * 0.6);
+        if (d > 360 && !this.anchored) this.seek(dt, pl.x, pl.y, this.speed * 0.6);
         if (this.st > 1.8) { this.state = d < 330 ? 'aim' : 'move'; this.st = 0; }
       }
     }
@@ -921,11 +1022,14 @@
       this.pending = false;
       this.fire = !!(opts && opts.fire);
       this.age = 0;
+      this.grazeIn = false;
+      this.grazeCd = 0;
     }
     get lockable() { return !this.dead; }
     update(dt, game) {
       if (this.pending) return;
       this.age += dt;
+      if (this.grazeCd > 0) this.grazeCd -= dt;
       this.x += this.vx * dt; this.y += this.vy * dt;
       this.life -= dt;
       if (this.life <= 0 || this.x < -60 || this.y < -60 || this.x > game.w + 60 || this.y > game.h + 60) this.dead = true;
@@ -1062,9 +1166,30 @@
       this.dead = false;
       this.ph = Math.random() * TAU;
     }
+    /** 竜巻一斉バキューム：螺旋軌道で秒速1800pxでプレイヤーへ */
+    startTornado(px, py, dir) {
+      this.tornado = true;
+      this.magnet = true;
+      this.spin = dir || 1;
+      this.tr = Math.hypot(this.x - px, this.y - py);
+      this.ta = Math.atan2(this.y - py, this.x - px);
+    }
     update(dt, game) {
       this.age += dt;
       const pl = game.player;
+      if (this.tornado) {
+        const r = this.tr;
+        const tang = Math.min(r * 7, 1100);
+        const radial = Math.sqrt(Math.max(0, P.TORNADO_SPEED * P.TORNADO_SPEED - tang * tang));
+        this.tr = Math.max(0, r - Math.max(radial, 500) * dt);
+        this.ta += this.spin * (tang / Math.max(20, r)) * dt;
+        const ox = this.x, oy = this.y;
+        this.x = pl.x + Math.cos(this.ta) * this.tr;
+        this.y = pl.y + Math.sin(this.ta) * this.tr;
+        this.vx = (this.x - ox) / Math.max(dt, 1e-4); this.vy = (this.y - oy) / Math.max(dt, 1e-4);
+        if (this.tr < 16) { this.dead = true; game.collectGem(this); }
+        return;
+      }
       const dx = pl.x - this.x, dy = pl.y - this.y;
       const d = Math.hypot(dx, dy) || 1;
       if (!this.magnet && this.age > 0.25 && (d < game.magnetRadius() || game.magnetAll)) this.magnet = true;
@@ -1091,6 +1216,16 @@
       const pulse = 1 + Math.sin(game.realTime * 6 + this.ph) * 0.12;
       const big = this.value >= 8;
       const c = big ? C.gold : C.jade;
+      if (this.tornado && !pal.inv) {
+        // 翡翠色の竜巻軌跡
+        ctx.save();
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.strokeStyle = U.rgba(C.jade, 0.45);
+        ctx.lineWidth = s * 1.4;
+        ctx.lineCap = 'round';
+        ctx.beginPath(); ctx.moveTo(this.x, this.y); ctx.lineTo(this.x - this.vx * 0.03, this.y - this.vy * 0.03); ctx.stroke();
+        ctx.restore();
+      }
       ctx.save();
       ctx.translate(this.x, this.y);
       ctx.rotate(game.realTime * 1.5 + this.ph);
@@ -1134,6 +1269,248 @@
       ctx.beginPath(); ctx.arc(0, 0, 22, 0, TAU); ctx.stroke();
       ctx.restore();
     }
+  }
+
+  /* ========================================================================
+   * 秘伝の巻物（Jackpot Scroll）：エリート撃破で確定ドロップ
+   * ====================================================================== */
+  class Scroll {
+    constructor(x, y) {
+      this.x = x; this.y = y;
+      this.r = 16;
+      this.life = P.SCROLL_LIFE;
+      this.age = 0;
+      this.dead = false;
+      this.vy = -120;
+    }
+    update(dt, game) {
+      this.age += dt;
+      this.life -= dt;
+      if (this.life <= 0) { this.dead = true; return; }
+      this.vy *= Math.exp(-4 * dt);
+      this.y += this.vy * dt;
+      const pl = game.player;
+      const d = Math.hypot(pl.x - this.x, pl.y - this.y);
+      if (d < 80 && d > 1) { this.x += (pl.x - this.x) / d * 160 * dt; this.y += (pl.y - this.y) / d * 160 * dt; }
+      if (d < this.r + pl.r + 8) { this.dead = true; game.collectScroll(this); }
+    }
+    draw(ctx, pal, game) {
+      const t = game.realTime;
+      const blink = this.life < 4 && Math.floor(t * 8) % 2 === 0;
+      if (blink) return;
+      ctx.save();
+      ctx.translate(this.x, this.y + Math.sin(t * 3 + this.age) * 4);
+      if (!pal.inv) {
+        ctx.globalCompositeOperation = 'lighter';
+        const g = ctx.createRadialGradient(0, 0, 4, 0, 0, 46);
+        g.addColorStop(0, 'rgba(255,190,46,0.55)');
+        g.addColorStop(1, 'rgba(255,190,46,0)');
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(0, 0, 46, 0, TAU); ctx.fill();
+        ctx.rotate(t * 1.2);
+        ctx.strokeStyle = 'rgba(255,230,160,0.6)';
+        ctx.lineWidth = 1.5;
+        for (let i = 0; i < 8; i++) {
+          const a = (i / 8) * TAU;
+          ctx.beginPath(); ctx.moveTo(Math.cos(a) * 22, Math.sin(a) * 22); ctx.lineTo(Math.cos(a) * 34, Math.sin(a) * 34); ctx.stroke();
+        }
+        ctx.rotate(-t * 1.2);
+        ctx.globalCompositeOperation = 'source-over';
+      }
+      ctx.rotate(-0.35);
+      // 巻物本体
+      ctx.fillStyle = col(pal, '#F3E6C4');
+      ctx.fillRect(-14, -8, 28, 16);
+      ctx.fillStyle = col(pal, '#7A1020');
+      ctx.fillRect(-14, -8, 28, 4);
+      ctx.fillStyle = col(pal, C.gold);
+      ctx.fillRect(-18, -10, 5, 20);
+      ctx.fillRect(13, -10, 5, 20);
+      ctx.fillStyle = col(pal, '#1A0608');
+      ctx.font = '900 10px "Hiragino Mincho ProN","Yu Mincho",serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('秘伝', 0, 3);
+      ctx.restore();
+    }
+  }
+
+  /* ========================================================================
+   * 5大陣形スポナー（Formation）：一筆書きでなぞりたくなる美しい陣形
+   * 陣形のアンカー（中心）が移動し、各メンバーは自分のスロットへ吸着する。
+   * ====================================================================== */
+  class Formation {
+    constructor(type, game, cfg) {
+      this.type = type;
+      this.t = 0;
+      this.done = false;
+      this.members = [];
+      this.slots = [];        // ローカル座標 [x, y]
+      this.rot = 0;
+      this.rotV = 0;
+      this.scale = 1;
+      this.carrier = null;    // 中心の火薬樽（Gimmick）
+      Object.assign(this, cfg || {});
+    }
+    add(e, ox, oy) {
+      e.form = this;
+      e.slot = this.slots.length;
+      this.slots.push([ox, oy]);
+      this.members.push(e);
+      return e;
+    }
+    _rotPt(ox, oy) {
+      const c = Math.cos(this.rot), s = Math.sin(this.rot);
+      return { x: this.x + (ox * c - oy * s) * this.scale, y: this.y + (ox * s + oy * c) * this.scale };
+    }
+    slotPos(i) {
+      if (this.type === 'sLine') {
+        // S字大名行列：各メンバーは同じS字曲線を時間差で行進
+        const u = this.t * this.speed - i * this.spacing;
+        if (u > this.endU) return null;  // 終点に到達したメンバーから自由行動へ
+        const along = u, side = Math.sin(u / this.wave * TAU) * this.amp;
+        return { x: this.x + this.dx * along - this.dy * side, y: this.y + this.dy * along + this.dx * side };
+      }
+      const sl = this.slots[i];
+      return this._rotPt(sl[0], sl[1]);
+    }
+    update(dt, game) {
+      if (this.done) return;
+      this.t += dt;
+      const pl = game.player;
+      const alive = this.members.some((m) => !m.dead && m.form === this);
+      if (!alive && this.type !== 'opening') { this.finish(); return; }
+      switch (this.type) {
+        case 'opening':
+          // 2.5秒は二重円陣を保ってゆっくり回転し、その後一斉に襲い掛かる
+          this.rot += dt * 0.35;
+          if (this.t > 2.6 || !alive) this.finish();
+          break;
+        case 'ring': {
+          const dx = pl.x - this.x, dy = pl.y - this.y, d = Math.hypot(dx, dy) || 1;
+          if (d > 175) { this.x += dx / d * 72 * dt; this.y += dy / d * 72 * dt; }
+          this.rot += dt * 0.6;
+          if (d <= 175 || this.t > 11) this.finish();
+          break;
+        }
+        case 'sLine':
+          if (this.t * this.speed - (this.members.length - 1) * this.spacing > this.endU) this.finish();
+          break;
+        case 'vWing':
+          this.x += this.vx * dt; this.y += this.vy * dt;
+          if (this.t > 1.2 && (this.x < -260 || this.y < -260 || this.x > game.w + 260 || this.y > game.h + 260)) this.finish();
+          break;
+        case 'spiral':
+          this.rot += dt * 0.55;
+          this.scale = Math.max(0.55, 1.25 - this.t * 0.08);
+          if (this.t > 9.5) this.finish();
+          break;
+        case 'sniper': {
+          const dx = pl.x - this.x, dy = pl.y - this.y, d = Math.hypot(dx, dy) || 1;
+          if (d > 300) { this.x += dx / d * 55 * dt; this.y += dy / d * 55 * dt; }
+          const want = Math.atan2(dy, dx) - Math.PI / 2;
+          this.rot += U.clamp(U.angleDiff(this.rot, want), -dt, dt);
+          if (this.t > 14) this.finish();
+          break;
+        }
+      }
+      if (this.carrier && !this.carrier.dead) { this.carrier.x = this.x; this.carrier.y = this.y; }
+    }
+    finish() {
+      this.done = true;
+      for (const m of this.members) if (m.form === this) m.form = null;
+    }
+  }
+
+  /** 陣形を生成して game.enemies へ投入する */
+  function spawnFormation(game, type, opts) {
+    opts = opts || {};
+    const cfg = CFG.FORMATIONS[type];
+    const pl = game.player;
+    const W = game.w, H = game.h;
+    const eo = opts.enemyOpts || {};
+    const push = (e) => { game.enemies.push(e); return e; };
+    const edge = () => game._edgePoint();
+    let f;
+    if (type === 'opening') {
+      // 主人公の上方220px：火薬樽1＋提灯お化け2を中心に、20体の笠蜘蛛が二重円陣
+      const x = U.clamp(pl.x, 140, W - 140), y = U.clamp(pl.y - 220, 130, H - 140);
+      f = new Formation('opening', game, { x, y });
+      const barrel = new PowderBarrel(x, y);
+      barrel.age = 1;
+      game.gimmicks.push(barrel);
+      f.carrier = barrel;
+      f.add(push(new BombLantern(x - 30, y, eo)), -30, 0);
+      f.add(push(new BombLantern(x + 30, y, eo)), 30, 0);
+      for (let i = 0; i < 8; i++) { const a = (i / 8) * TAU; f.add(push(new SwarmSpider(x + Math.cos(a) * 70, y + Math.sin(a) * 70, eo)), Math.cos(a) * 70, Math.sin(a) * 70); }
+      for (let i = 0; i < 12; i++) { const a = (i / 12) * TAU + 0.26; f.add(push(new SwarmSpider(x + Math.cos(a) * 118, y + Math.sin(a) * 118, eo)), Math.cos(a) * 118, Math.sin(a) * 118); }
+      for (const m of f.members) m.age = 0.2;
+    } else if (type === 'sLine') {
+      const n = U.randInt(cfg.min, cfg.max);
+      const st = edge();
+      const tx = pl.x + U.rand(-120, 120), ty = pl.y + U.rand(-120, 120);
+      const L = Math.hypot(tx - st.x, ty - st.y) || 1;
+      f = new Formation('sLine', game, { x: st.x, y: st.y, dx: (tx - st.x) / L, dy: (ty - st.y) / L, speed: 115, spacing: 30, amp: 70, wave: 340, endU: L + 60 });
+      for (let i = 0; i < n; i++) {
+        const sp = { x: st.x - f.dx * i * 30, y: st.y - f.dy * i * 30 };
+        f.add(push(new SwarmSpider(sp.x, sp.y, eo)), 0, 0);
+      }
+    } else if (type === 'ring') {
+      const n = U.randInt(cfg.min, cfg.max);
+      const st = edge();
+      f = new Formation('ring', game, { x: st.x, y: st.y });
+      const useBarrel = Math.random() < 0.6;
+      if (useBarrel) {
+        const barrel = new PowderBarrel(st.x, st.y);
+        game.gimmicks.push(barrel);
+        f.carrier = barrel;
+      } else {
+        f.add(push(new BombLantern(st.x, st.y, eo)), 0, 0);
+      }
+      const inner = n > 20 ? 10 : 0;
+      for (let i = 0; i < n; i++) {
+        const ringN = i < inner ? inner : n - inner;
+        const k = i < inner ? i : i - inner;
+        const R = i < inner ? 64 : 104 + (n - 18) * 1.5;
+        const a = (k / ringN) * TAU + (i < inner ? 0.3 : 0);
+        f.add(push(new SwarmSpider(st.x + Math.cos(a) * R, st.y + Math.sin(a) * R, eo)), Math.cos(a) * R, Math.sin(a) * R);
+      }
+    } else if (type === 'vWing') {
+      // 雁行（V字）で画面を斜めに高速通過
+      const corner = U.randInt(0, 3);
+      const sx = corner % 2 === 0 ? -120 : W + 120, sy = corner < 2 ? U.rand(-60, H * 0.35) : U.rand(H * 0.65, H + 60);
+      const tx = W - sx + U.rand(-80, 80), ty = H - sy + U.rand(-80, 80);
+      const L = Math.hypot(tx - sx, ty - sy) || 1;
+      const dir = Math.atan2(ty - sy, tx - sx);
+      f = new Formation('vWing', game, { x: sx, y: sy, vx: (tx - sx) / L * 215, vy: (ty - sy) / L * 215, rot: dir + Math.PI / 2 });
+      for (let i = 0; i < cfg.min; i++) {
+        const k = Math.ceil(i / 2), side = i === 0 ? 0 : (i % 2 ? -1 : 1);
+        const ox = side * k * 26, oy = k * 28;  // 先頭が前方（ローカル -y が進行方向）
+        const Cls = (i === 0 || i % 3 === 0) ? SplitterNinja : SwarmSpider;
+        const p = f._rotPt(ox, oy);
+        const e = push(new Cls(p.x, p.y, eo));
+        f.add(e, ox, oy);
+      }
+    } else if (type === 'spiral') {
+      const n = U.randInt(cfg.min, cfg.max);
+      const cx = Math.random() < 0.5 ? pl.x : W / 2, cy = Math.random() < 0.5 ? pl.y : H / 2;
+      f = new Formation('spiral', game, { x: cx, y: cy, scale: 1.25 });
+      for (let i = 0; i < n; i++) {
+        const th = i * 0.43, R = 110 + i * 8.5;
+        const p = f._rotPt(Math.cos(th) * R, Math.sin(th) * R);
+        const e = push(new SwarmSpider(p.x, p.y, eo));
+        f.add(e, Math.cos(th) * R, Math.sin(th) * R);
+      }
+    } else if (type === 'sniper') {
+      const st = edge();
+      f = new Formation('sniper', game, { x: st.x, y: st.y });
+      const S = 88;
+      const corners = [[-S, -S], [S, -S], [S, S], [-S, S]];
+      for (const c of corners) f.add(push(new SniperAshigaru(st.x + c[0], st.y + c[1], eo)), c[0], c[1]);
+      for (const c of [[0, -S], [0, S]]) f.add(push(new ArmoredOni(st.x + c[0], st.y + c[1], eo)), c[0], c[1]);
+      for (const c of [[-S, 0], [S, 0], [-S / 2, -S], [S / 2, -S], [-S / 2, S], [S / 2, S]]) f.add(push(new SwarmSpider(st.x + c[0], st.y + c[1], eo)), c[0], c[1]);
+    }
+    if (f) game.formations.push(f);
+    return f;
   }
 
   /* ========================================================================
@@ -1866,7 +2243,7 @@
   ZI.Entities = {
     Player, Enemy, SwarmSpider, SniperAshigaru, SplitterNinja, BombLantern, ArmoredOni, BerserkRonin, SaintClone,
     Gimmick, PowderBarrel, ThunderLantern, VoidCrystal,
-    EnemyBullet, HomingKunai, CrescentWave, SoulGem, MiniBlackHole,
+    EnemyBullet, HomingKunai, CrescentWave, SoulGem, MiniBlackHole, Scroll, Formation, spawnFormation,
     WeakCore, Boss, BossCentipede, BossSixArmGeneral, BossSwordSaint,
     BOSS_CLASSES, ENEMY_CLASSES, GIMMICK_CLASSES
   };

@@ -70,6 +70,14 @@
     <!-- 左下：習得スキル -->
     <div id="hud-skills" class="hud-skills"></div>
 
+    <!-- 上部中央：秘伝開眼スロット（ゲームを止めずに抽選） -->
+    <div id="slot" class="slot" aria-live="polite">
+      <div class="slot-title">秘伝開眼スロット！！</div>
+      <div class="slot-reels"><span class="reel">閃</span><span class="reel">天</span><span class="reel">鬼</span></div>
+      <div id="slot-result" class="slot-result"></div>
+      <div id="slot-detail" class="slot-detail"></div>
+    </div>
+
     <!-- 中央下：奥義発動ボタン -->
     <button id="btn-ult" class="ult-btn">
       <span class="ult-name">第壱奥義 千本桜・墨嵐</span>
@@ -94,11 +102,18 @@
       <div class="title-actions">
         <button id="btn-dojo" class="btn gold">鍛冶場・道場 <small>（刀変更・永続強化）</small> <span class="coin">魂貨 <b id="title-coins">0</b> 両</span></button>
         <button id="btn-mute-title" class="btn ghost mute-btn">♪ ON</button>
+        <label class="ex-switch" for="ex-switch">
+          <input type="checkbox" id="ex-switch">
+          <span class="ex-track"><span class="ex-knob"></span></span>
+          <span class="ex-label">修羅の門（EX幕をいつでも挑戦可能にする）</span>
+        </label>
       </div>
       <div class="howto">
-        <div><b>短く弾く／クリック</b>【迅雷】敵へ突進斬り。命中で0.35秒チェイン受付</div>
-        <div><b>長押し＋なぞる</b>【居合】時間停止で一筆書きロック → 離して斬り抜け＆同時爆砕</div>
+        <div><b>短く弾く／クリック</b>【迅雷】集中18消費で突進斬り。命中で還元＆帯電、空振りは息切れ</div>
+        <div><b>長押し＋なぞる</b>【居合】カーソル位置で直接ロック → 離して0.22秒で斬り抜け＆同時爆砕</div>
+        <div><b>何も押さない</b>カーソルへホバー移動。敵や弾を紙一重でかすめて【見切り】集中＆奥義チャージ</div>
         <div><b>SPACE／右クリック／奥義ボタン</b>奥義（100%：千本桜・墨嵐 ／ 200%：絶・虚空一文字）</div>
+        <div><b>エリート撃破</b>秘伝の巻物ドロップ → スロットでスキル一括レベルアップ</div>
         <div><b>WASD・矢印</b>移動　<b>ESC／P</b>ポーズ　<b>M</b>ミュート　<b>1/2/3</b>スキル選択</div>
       </div>
     </div>
@@ -124,6 +139,10 @@
     <div class="levelup-inner">
       <h2 id="levelup-title" class="levelup-title">LEVEL UP!!</h2>
       <div class="levelup-hint">技を一つ選べ（1 / 2 / 3 キー or タップ）</div>
+      <div class="levelup-lock">
+        <div class="levelup-lock-bar"><div id="levelup-lock-fill" class="fill"></div></div>
+        <span id="levelup-lock-label" class="levelup-lock-label">準備完了まで 0.45s</span>
+      </div>
       <div id="levelup-cards" class="skill-cards"></div>
     </div>
   </div>
