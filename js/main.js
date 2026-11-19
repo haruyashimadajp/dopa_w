@@ -1574,7 +1574,7 @@
       if (this.run.rankIdx >= 3) ug *= P.ULT_RANK_S_MULT;
       this.addUlt(ug);
       // 魂ジェム
-      const val = e.xp * mult * (counter ? 5 : 1);
+      const val = e.xp * (counter ? 5 : 1);
       this.dropGems(e.x, e.y, val, counter ? 5 : (e.elite ? 3 : 1));
       // 一刀両断の断面分解：爆砕系の撃破は断面が「吹っ飛び肉弾」となり死体ボウリング連鎖
       const ang = opts.angle != null ? opts.angle : Math.random() * TAU;
@@ -2339,7 +2339,7 @@
       this.fx.callout(core.x, core.y - 30, '部位破壊!', C.gold, 32, this.realTime);
       this.fx.ring(core.x, core.y, 10, 90, 0.4, C.gold, 5);
       this.fx.sparks(core.x, core.y, 20, C.gold, 420, 0.5);
-      this.dropGems(core.x, core.y, 3 * this.rank.mult, 3);
+      this.dropGems(core.x, core.y, 3, 3);
       this.audio.playDetonation(4, false);
       this.shake(8);
       if (boss.hp <= 0) { boss.hp = 0; this.startExecution(boss); }
@@ -2355,8 +2355,8 @@
       boss.hp -= boss.maxHp * P.ALL_BREAK_PCT;
       this.addUlt(P.ALL_BREAK_ULT);
       this.run.score += Math.round(20000 * this.rank.mult);
-      this.dropGems(boss.x, boss.y, 30 * this.rank.mult, 6);
-      for (let i = 0; i < 4; i++) this.dropGems(boss.x + U.rand(-60, 60), boss.y + U.rand(-60, 60), 4 * this.rank.mult, 4);
+      this.dropGems(boss.x, boss.y, 30, 6);
+      for (let i = 0; i < 4; i++) this.dropGems(boss.x + U.rand(-60, 60), boss.y + U.rand(-60, 60), 4, 4);
       this.doHitstop(P.HITSTOP_BIG);
       this.punchZoom(P.ZOOM_PUNCH_MAX);
       this.shake(22);
@@ -2426,7 +2426,7 @@
         if (e.dead) continue;
         e.dead = true;
         this.fx.inkBurst(e.x, e.y, 5, 200);
-        this.dropGems(e.x, e.y, e.xp * this.rank.mult, 1);
+        this.dropGems(e.x, e.y, e.xp, 1);
       }
       for (const b of this.bullets) b.dead = true;
       for (const f of this.formations) f.finish();
@@ -2520,7 +2520,7 @@
       }
       for (let i = 0; i < 4; i++) this.fx.ring(b.x, b.y, 20, 200 + i * 120, 0.6 + i * 0.15, i % 2 ? C.gold : '#FFFFFF', 8 - i);
       this.fx.callout(this.w / 2, this.h * 0.3, '絶・一閃!!', 'rainbow', Math.min(80, this.w / 7), this.realTime);
-      for (let i = 0; i < 12; i++) this.dropGems(b.x + U.rand(-80, 80), b.y + U.rand(-80, 80), 6 * this.rank.mult, 5);
+      for (let i = 0; i < 12; i++) this.dropGems(b.x + U.rand(-80, 80), b.y + U.rand(-80, 80), 6, 5);
       this.addUlt(30);
     }
 
@@ -2691,7 +2691,7 @@
       const n = Math.min(220, P.GEM_MAX - this.gems.length);
       for (let i = 0; i < n; i++) {
         const a = -Math.PI / 2 + U.rand(-1.3, 1.3), s = U.rand(250, 900);
-        this.gems.push(new E.SoulGem(cx, cy, 0.5 * this.rank.mult, Math.cos(a) * s, Math.sin(a) * s));
+        this.gems.push(new E.SoulGem(cx, cy, 0.5, Math.cos(a) * s, Math.sin(a) * s));
       }
       this.audio.playSupernova();
       this.doHitstop(P.HITSTOP_BIG);
