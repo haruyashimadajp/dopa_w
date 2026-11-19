@@ -159,7 +159,7 @@
         return null;
       }
       if (inp.down && (inp.mode === 'move' || inp.mode === 'press')) {
-        const dx = inp.cx - inp.downX, dy = inp.cy - inp.downY;
+        const dx = inp.sx - inp.downSX, dy = inp.sy - inp.downSY;
         const d = Math.hypot(dx, dy);
         if (d > 8) return { x: pl.x + dx / d * 120, y: pl.y + dy / d * 120 };
       }
@@ -302,6 +302,8 @@
       inp.downT = performance.now();
       inp.downX = inp.lastX = p.x;
       inp.downY = inp.lastY = p.y;
+      // スクリーン座標の押下点（カメラ移動中でもタップ／フリック判定がズレないように）
+      inp.downSX = inp.sx; inp.downSY = inp.sy;
       inp.drag = 0;
       inp.touched.clear();
       inp.ignore = false;
@@ -368,11 +370,18 @@
       if (this.state !== STATE.PLAYING) { if (inp.mode === 'press' || inp.mode === 'aim') this.cancelAim(); return; }
       if (inp.mode === 'press') {
         inp.mode = 'idle';
-        // 135ms未満 → 【B：迅雷】
-        let vx = p.x - inp.downX, vy = p.y - inp.downY;
-        if (Math.hypot(vx, vy) < P.FLICK_MIN_DIST) { vx = p.x - this.player.x; vy = p.y - this.player.y; }
-        if (Math.hypot(vx, vy) < 1) { vx = Math.cos(this.player.facing); vy = Math.sin(this.player.facing); }
-        this.doPinball(Math.atan2(vy, vx));
+        // 【B：迅雷】フリック＝その方向へ定距離 ／ タップ＝タップ地点へ一閃
+        const svx = inp.sx - inp.downSX, svy = inp.sy - inp.downSY;
+        if (Math.hypot(svx, svy) >= P.FLICK_MIN_DIST) {
+          this.doPinball(Math.atan2(svy, svx));
+        } else {
+          // タップ地点は「画面中心＝主人公」基準のオフセットとして解釈する
+          // （連打中にカメラが追従移動していても、狙った方向・距離がズレない）
+          const z = this.camera.zoom;
+          const ox = (inp.sx - this.w / 2) / z, oy = (inp.sy - this.h / 2) / z;
+          if (Math.hypot(ox, oy) < P.TAP_DASH_MIN) this.doPinball(this.player.facing);
+          else this.doPinball(Math.atan2(oy, ox), null, false, { x: ox, y: oy });
+        }
       } else if (inp.mode === 'aim') {
         this.releaseAim();
       }
@@ -792,11 +801,11 @@
     /* ------------------------------------------------------------------
      * アクションB：迅雷（高速ピンボール連撃）
      * ---------------------------------------------------------------- */
-    doPinball(angle, forcedTarget, isAuto) {
+    doPinball(angle, forcedTarget, isAuto, tapOff) {
       const pl = this.player;
       const inp = this.input;
       if (!pl) return;
-      if (pl.dash) { inp.queuedFlick = { angle, forcedTarget }; return; }
+      if (pl.dash) { inp.queuedFlick = { angle, forcedTarget, tapOff }; return; }
       if (inp.flickCd > 0 && this.run.chainWindow <= 0 && !isAuto) return;
       // 集中ゲージ消費（息切れ中・ゲージ不足は発動不可）。縮地の自動連鎖は無消費
       if (!isAuto) {
@@ -824,7 +833,22 @@
       const dir = { x: Math.cos(angle), y: Math.sin(angle) };
       // 磁気ホーミング補正（±32度・340px以内の最も近い敵）
       let target = forcedTarget || null;
-      if (!target) {
+      // タップ：タップ地点付近（ロック半径×1.2）に標的があればそこへ吸着、無ければ地点ちょうどへ
+      const tapX = tapOff ? pl.x + tapOff.x : 0, tapY = tapOff ? pl.y + tapOff.y : 0;
+      if (tapOff && !target) {
+        let bd = Math.pow(this.lockRadius() * 1.2, 2);
+        const near = (o, x, y) => {
+          const d2 = U.dist2(tapX, tapY, x, y);
+          if (d2 < bd) { bd = d2; target = { x, y, ref: o }; }
+        };
+        for (const e of this.enemies) if (!e.dead && !e.pending && e.age > 0.1) near(e, e.x, e.y);
+        for (const g of this.gimmicks) if (g.lockable) near(g, g.x, g.y);
+        for (const b of this.bosses) {
+          if (!b.lockable) continue;
+          for (const c of b.cores) if (!c.broken) near(c, c.x, c.y);
+          for (const p of b.parts()) near(b, p.x, p.y);
+        }
+      } else if (!target) {
         let bd = range * range;
         const maxAng = P.PINBALL_HOMING_ANGLE * Math.PI / 180;
         const consider = (o, x, y) => {
@@ -847,14 +871,20 @@
       let ex, ey;
       if (target) {
         const a = Math.atan2(target.y - pl.y, target.x - pl.x);
-        const d = Math.min(Math.hypot(target.x - pl.x, target.y - pl.y) + 34, range + 34);
+        const dt0 = Math.hypot(target.x - pl.x, target.y - pl.y) + 34;
+        const d = tapOff ? dt0 : Math.min(dt0, range + 34);
         ex = pl.x + Math.cos(a) * d; ey = pl.y + Math.sin(a) * d;
         angle = a;
+      } else if (tapOff) {
+        ex = tapX; ey = tapY;
+        angle = Math.atan2(tapY - pl.y, tapX - pl.x);
       } else {
         ex = pl.x + dir.x * dist; ey = pl.y + dir.y * dist;
       }
       const x0 = pl.x, y0 = pl.y;
-      const dur = P.PINBALL_DASH_TIME / ((1 + bonus) * p2) / (this.hasAwakening('shukuchi') ? 1.3 : 1);
+      // 距離に応じてダッシュ時間を伸縮（タップの遠距離移動でも速度感を一定に）
+      const lenK = U.clamp(Math.hypot(ex - x0, ey - y0) / P.PINBALL_DASH_DIST, 0.5, 3);
+      const dur = P.PINBALL_DASH_TIME * lenK / ((1 + bonus) * p2) / (this.hasAwakening('shukuchi') ? 1.3 : 1);
       pl.startDash(ex, ey, dur, 'pinball');
       pl.invuln = Math.max(pl.invuln, P.PINBALL_INVULN);
       inp.flickCd = P.FLICK_COOLDOWN;
@@ -1396,7 +1426,7 @@
       if (inp.queuedFlick) {
         const q = inp.queuedFlick;
         inp.queuedFlick = null;
-        this.doPinball(q.angle, q.forcedTarget);
+        this.doPinball(q.angle, q.forcedTarget, false, q.tapOff);
         return;
       }
     }

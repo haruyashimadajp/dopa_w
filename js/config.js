@@ -47,6 +47,7 @@
     // 3.1 入力ステートマシン
     HOLD_THRESHOLD_MS: 135,
     FLICK_MIN_DIST: 12,
+    TAP_DASH_MIN: 30,         // タップ地点が主人公（画面中心）からこれ未満なら向いている方向へ通常の迅雷
     DRAG_IAI_DIST: 90,
     DRAG_IAI_TOUCH_COUNT: 2,
 
