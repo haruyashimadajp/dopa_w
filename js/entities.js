@@ -104,9 +104,6 @@
         if (Math.hypot(this.vx, this.vy) > 20) this.facing = Math.atan2(this.vy, this.vx);
         this.x += this.vx * dt; this.y += this.vy * dt;
       }
-      const m = 16;
-      this.x = U.clamp(this.x, m, game.w - m);
-      this.y = U.clamp(this.y, m, game.h - m);
       // 軌跡記録
       const last = this.trail[0];
       if (Math.hypot(this.x - last.x, this.y - last.y) > 0.5 || game.frame % 2 === 0) {
@@ -180,25 +177,6 @@
           ctx.restore();
         }
       }
-      // 八咫鏡：8本の回転光刃
-      if (game.hasAwakening('yata')) {
-        ctx.save();
-        ctx.globalCompositeOperation = pal.inv ? 'source-over' : 'lighter';
-        for (let i = 0; i < 8; i++) {
-          const a = game.realTime * 3.4 + (i / 8) * TAU;
-          const x = this.x + Math.cos(a) * 62, y = this.y + Math.sin(a) * 62;
-          ctx.save();
-          ctx.translate(x, y);
-          ctx.rotate(a + Math.PI / 2);
-          ctx.fillStyle = colA(pal, C.cyan, 0.3);
-          ctx.fillRect(-4, -14, 8, 28);
-          ctx.fillStyle = pal.inv ? C.crimson : '#E8FCFF';
-          ctx.beginPath(); ctx.moveTo(0, -14); ctx.lineTo(3, 10); ctx.lineTo(-3, 10); ctx.closePath(); ctx.fill();
-          ctx.restore();
-        }
-        ctx.restore();
-      }
-
       // 残像マフラー（過去8フレームを繋いだテーパー付きポリゴン）
       const tr = this.trail;
       const scarfCol = this.blade.id === 'byakuya' || this.blade.id === 'shiden' ? C.cyan : C.crimson;
@@ -244,7 +222,26 @@
       ctx.beginPath(); ctx.moveTo(8, 0); ctx.lineTo(8 + L, 0); ctx.stroke();
       ctx.restore();
 
+      // v3：広視界でも0.1秒で自機を視認できる足元リング＆中心発光コア
+      ctx.save();
+      ctx.globalCompositeOperation = pal.inv ? 'source-over' : 'lighter';
+      const pulse = 0.75 + Math.sin(game.realTime * 6) * 0.25;
+      ctx.strokeStyle = colA(pal, C.cyan, 0.55 * pulse);
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(this.x, this.y, P.PLAYER_HAT_RADIUS + 3, 0, TAU); ctx.stroke();
+      ctx.fillStyle = colA(pal, '#FFFFFF', 0.22);
+      ctx.beginPath(); ctx.arc(this.x, this.y, P.PLAYER_HAT_RADIUS + 9, 0, TAU); ctx.fill();
+      ctx.restore();
       this._drawHat(ctx, pal, this.x, this.y, 1);
+      if (!pal.inv) {
+        ctx.save();
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.fillStyle = 'rgba(255,255,255,0.95)';
+        ctx.beginPath(); ctx.arc(this.x, this.y, 4.2, 0, TAU); ctx.fill();
+        ctx.fillStyle = U.rgba(C.cyan, 0.5 * pulse);
+        ctx.beginPath(); ctx.arc(this.x, this.y, 8, 0, TAU); ctx.fill();
+        ctx.restore();
+      }
 
       // 迅雷帯電：刀と外周に黄金の電撃オーラ（スタック数に比例）
       const ch = game.charge || 0;
@@ -524,7 +521,7 @@
     behavior(dt, game) {
       const pl = game.player;
       const d = Math.hypot(pl.x - this.x, pl.y - this.y);
-      const onScreen = this.x > 20 && this.x < game.w - 20 && this.y > 20 && this.y < game.h - 20;
+      const onScreen = game.inView(this.x, this.y, -20);
       this.st += dt;
       if (this.state === 'move') {
         if (!this.anchored) this.seek(dt, pl.x, pl.y, this.speed);
@@ -545,12 +542,12 @@
         if (this.st > 1.8) { this.state = d < 330 ? 'aim' : 'move'; this.st = 0; }
       }
     }
-    drawTelegraph(ctx, pal) {
+    drawTelegraph(ctx, pal, game) {
       if (this.state !== 'aim' || this.pending) return;
       const a = 0.25 + (this.st / 0.9) * 0.6;
       ctx.save();
       ctx.strokeStyle = colA(pal, C.crimson, a);
-      ctx.lineWidth = 1 + (this.st / 0.9) * 1.5;
+      ctx.lineWidth = Math.max(1 + (this.st / 0.9) * 1.5, 2.5 / game.camera.zoom);
       ctx.setLineDash([10, 6]);
       ctx.beginPath();
       ctx.moveTo(this.x, this.y);
@@ -749,12 +746,12 @@
       for (const g of this.ghosts) g.a -= dt * 1.6;
       this.ghosts = this.ghosts.filter((g) => g.a > 0);
     }
-    drawTelegraph(ctx, pal) {
+    drawTelegraph(ctx, pal, game) {
       if (this.state !== 'warn' || this.pending) return;
       const p = this.st / 0.6;
       ctx.save();
       ctx.strokeStyle = colA(pal, C.crimson, 0.3 + p * 0.6);
-      ctx.lineWidth = 3 + p * 8;
+      ctx.lineWidth = Math.max(3 + p * 8, 2.5 / game.camera.zoom);
       ctx.lineCap = 'round';
       ctx.beginPath();
       ctx.moveTo(this.x, this.y);
@@ -832,12 +829,12 @@
         if (this.st > 0.55) { this.dead = true; this.vanished = true; }
       }
     }
-    drawTelegraph(ctx, pal) {
+    drawTelegraph(ctx, pal, game) {
       if (this.state !== 'stance' || this.pending) return;
       const p = this.st / 1.6;
       ctx.save();
       ctx.strokeStyle = colA(pal, C.crimson, 0.2 + p * 0.5);
-      ctx.lineWidth = 2 + p * 5;
+      ctx.lineWidth = Math.max(2 + p * 5, 2.5 / game.camera.zoom);
       ctx.setLineDash([14, 8]);
       ctx.beginPath(); ctx.moveTo(this.x, this.y);
       ctx.lineTo(this.x + Math.cos(this.dashAng) * 520, this.y + Math.sin(this.dashAng) * 520);
@@ -1008,7 +1005,7 @@
   }
 
   /* ========================================================================
-   * 弾・クナイ・真空波・魂ジェム
+   * 弾・真空波・残光斬撃・魂ジェム
    * ====================================================================== */
   class EnemyBullet {
     constructor(x, y, vx, vy, opts) {
@@ -1032,70 +1029,126 @@
       if (this.grazeCd > 0) this.grazeCd -= dt;
       this.x += this.vx * dt; this.y += this.vy * dt;
       this.life -= dt;
-      if (this.life <= 0 || this.x < -60 || this.y < -60 || this.x > game.w + 60 || this.y > game.h + 60) this.dead = true;
+      if (this.life <= 0 || !game.inView(this.x, this.y, game.view.r * 0.6)) this.dead = true;
     }
     draw(ctx, pal) {
-      const r = this.r;
+      const r = P.BULLET_DRAW_RADIUS;   // 描画のみ8.5（当たり判定は7のまま）
       if (this.pending) {
         ctx.fillStyle = pal.inv ? C.crimson : '#FFFFFF';
         ctx.beginPath(); ctx.arc(this.x, this.y, r * 1.2, 0, TAU); ctx.fill();
         return;
       }
+      // 白芯＋紅ネオン外光をはっきり描く
       if (!pal.inv) {
-        ctx.fillStyle = this.fire ? 'rgba(255,120,30,0.25)' : 'rgba(255,30,66,0.22)';
-        ctx.beginPath(); ctx.arc(this.x, this.y, r * 2, 0, TAU); ctx.fill();
+        ctx.save();
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.fillStyle = this.fire ? 'rgba(255,120,30,0.32)' : 'rgba(255,30,66,0.32)';
+        ctx.beginPath(); ctx.arc(this.x, this.y, r * 2.1, 0, TAU); ctx.fill();
+        ctx.restore();
       }
       ctx.fillStyle = col(pal, this.fire ? '#FF7A1E' : C.crimson);
       ctx.beginPath(); ctx.arc(this.x, this.y, r, 0, TAU); ctx.fill();
-      ctx.fillStyle = pal.inv ? C.paper : '#2A0006';
-      ctx.beginPath(); ctx.arc(this.x, this.y, r * 0.5, 0, TAU); ctx.fill();
-    }
-  }
-
-  /* プレイヤーの蒼白い追尾クナイ（秒速620px） */
-  class HomingKunai {
-    constructor(x, y, angle, dmg) {
-      this.x = x; this.y = y;
-      this.angle = angle;
-      this.speed = P.KUNAI_SPEED;
-      this.dmg = dmg;
-      this.target = null;
-      this.life = 2.6;
-      this.dead = false;
-      this.age = 0;
-    }
-    update(dt, game) {
-      this.age += dt;
-      this.life -= dt;
-      if (this.life <= 0) { this.dead = true; return; }
-      if (!this.target || this.target.dead) this.target = game.nearestTarget(this.x, this.y, 900);
-      if (this.target && this.age > 0.06) {
-        const want = Math.atan2(this.target.y - this.y, this.target.x - this.x);
-        const diff = U.angleDiff(this.angle, want);
-        const turn = 14 * dt;
-        this.angle += U.clamp(diff, -turn, turn);
-      }
-      this.x += Math.cos(this.angle) * this.speed * dt;
-      this.y += Math.sin(this.angle) * this.speed * dt;
-      if (this.x < -80 || this.y < -80 || this.x > game.w + 80 || this.y > game.h + 80) this.dead = true;
-    }
-    draw(ctx, pal) {
-      ctx.save();
-      ctx.translate(this.x, this.y);
-      ctx.rotate(this.angle);
-      ctx.globalCompositeOperation = pal.inv ? 'source-over' : 'lighter';
-      ctx.strokeStyle = colA(pal, C.cyan, 0.35);
-      ctx.lineWidth = 3;
-      ctx.beginPath(); ctx.moveTo(-26, 0); ctx.lineTo(0, 0); ctx.stroke();
-      ctx.fillStyle = pal.inv ? C.crimson : '#E6FDFF';
-      ctx.beginPath(); ctx.moveTo(9, 0); ctx.lineTo(-3, 3.5); ctx.lineTo(-3, -3.5); ctx.closePath(); ctx.fill();
-      ctx.fillStyle = colA(pal, C.cyan, 0.9);
-      ctx.fillRect(-9, -1.2, 6, 2.4);
-      ctx.restore();
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = pal.inv ? C.ink : '#FFD0D8';
+      ctx.stroke();
+      ctx.fillStyle = pal.inv ? C.paper : '#FFFFFF';
+      ctx.beginPath(); ctx.arc(this.x, this.y, r * 0.42, 0, TAU); ctx.fill();
     }
   }
 
   /* 真空三日月波（貫通／天叢雲時は画面端で反射して3秒旋回） */
+  // ============================================================
+  //  AfterimageSlash：燕返し／無想連閃の時間差残光斬撃（v3）
+  //  手動斬撃の軌跡（ポリライン）を記憶し、delay 秒後に高速で同じ軌道を斬り抜ける。
+  //  当たり判定は main.js 側（_updateAfterimages）で行い、ここは進行と描画のみ。
+  // ============================================================
+  class AfterimageSlash {
+    constructor(pts, opts) {
+      this.pts = pts;                       // [{x,y}, ...]（2点以上）
+      this.delay = opts.delay;              // 発動までの実時間
+      this.sweep = opts.sweep || 0.1;       // 斬り抜けに掛かる時間
+      this.dmg = opts.dmg;
+      this.half = opts.half;
+      this.src = opts.src || 'tsubame';
+      this.color = opts.color || '#BFF6FF';
+      this.edge = opts.edge || C.gold;
+      this.seen = new Set();
+      this.t = 0;
+      this.prog = 0;                        // 0..1 の掃引進捗
+      this.lastLen = 0;                     // 前フレームまでに処理した軌跡長
+      this.dead = false;
+      let L = 0;
+      this.cum = [0];
+      for (let i = 1; i < pts.length; i++) {
+        L += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+        this.cum.push(L);
+      }
+      this.len = Math.max(1, L);
+    }
+    get active() { return this.t >= this.delay; }
+    /** 軌跡長 d の地点の座標 */
+    pointAt(d) {
+      const p = this.pts, c = this.cum;
+      if (d <= 0) return { x: p[0].x, y: p[0].y };
+      for (let i = 1; i < p.length; i++) {
+        if (d <= c[i]) {
+          const seg = c[i] - c[i - 1] || 1;
+          const k = (d - c[i - 1]) / seg;
+          return { x: U.lerp(p[i - 1].x, p[i].x, k), y: U.lerp(p[i - 1].y, p[i].y, k) };
+        }
+      }
+      const q = p[p.length - 1];
+      return { x: q.x, y: q.y };
+    }
+    /** 進行し、今フレームで新たに掃引した区間の折れ線を返す（未発動なら null） */
+    update(dt) {
+      this.t += dt;
+      if (!this.active) return null;
+      this.prog = Math.min(1, (this.t - this.delay) / this.sweep);
+      const d1 = this.prog * this.len;
+      const d0 = this.lastLen;
+      this.lastLen = d1;
+      if (this.prog >= 1) this.dead = true;
+      if (d1 <= d0) return null;
+      const out = [this.pointAt(d0)];
+      for (let i = 1; i < this.pts.length - 1; i++) if (this.cum[i] > d0 && this.cum[i] < d1) out.push(this.pts[i]);
+      out.push(this.pointAt(d1));
+      return out;
+    }
+    draw(ctx, pal) {
+      // 発動前は薄い予兆の軌跡（記憶された斬撃の残像）
+      ctx.save();
+      ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      if (!this.active) {
+        const a = 0.12 + 0.18 * (this.t / Math.max(0.01, this.delay));
+        ctx.strokeStyle = colA(pal, this.color, a);
+        ctx.lineWidth = 2;
+        ctx.setLineDash([10, 8]);
+        ctx.beginPath();
+        ctx.moveTo(this.pts[0].x, this.pts[0].y);
+        for (let i = 1; i < this.pts.length; i++) ctx.lineTo(this.pts[i].x, this.pts[i].y);
+        ctx.stroke();
+        ctx.restore();
+        return;
+      }
+      // 掃引中：光る斬撃の頭
+      const head = this.pointAt(this.prog * this.len);
+      const tail = this.pointAt(Math.max(0, this.prog * this.len - 120));
+      const g = ctx.createLinearGradient(tail.x, tail.y, head.x, head.y);
+      g.addColorStop(0, colA(pal, this.color, 0));
+      g.addColorStop(1, colA(pal, this.color, 0.95));
+      ctx.strokeStyle = colA(pal, this.edge, 0.7);
+      ctx.lineWidth = this.half * 0.9;
+      ctx.beginPath(); ctx.moveTo(tail.x, tail.y); ctx.lineTo(head.x, head.y); ctx.stroke();
+      ctx.strokeStyle = g;
+      ctx.lineWidth = this.half * 0.55;
+      ctx.beginPath(); ctx.moveTo(tail.x, tail.y); ctx.lineTo(head.x, head.y); ctx.stroke();
+      ctx.fillStyle = pal.inv ? C.ink : '#FFFFFF';
+      ctx.beginPath(); ctx.arc(head.x, head.y, this.half * 0.32, 0, TAU); ctx.fill();
+      ctx.restore();
+    }
+  }
+
   class CrescentWave {
     constructor(x, y, angle, size, awakened) {
       this.x = x; this.y = y;
@@ -1104,7 +1157,8 @@
       this.vx = Math.cos(angle) * this.speed; this.vy = Math.sin(angle) * this.speed;
       this.size = size;
       this.r = 22 * size;
-      this.life = awakened ? 3.0 : 0.75;
+      this.life = awakened ? 2.8 : 0.75;
+      this.orbitA = angle;     // 天叢雲：螺旋軌道の位相
       this.max = this.life;
       this.awakened = awakened;
       this.hitMap = new Map();
@@ -1116,21 +1170,19 @@
     update(dt, game) {
       this.life -= dt;
       if (this.life <= 0) { this.dead = true; return; }
-      if (this.awakened) {
-        // 旋回（ブーメラン）
-        const turn = 2.2 * dt;
-        const a = Math.atan2(this.vy, this.vx) + turn;
-        this.vx = Math.cos(a) * this.speed; this.vy = Math.sin(a) * this.speed;
-      }
-      this.x += this.vx * dt; this.y += this.vy * dt;
       this.spin += dt * 10;
       if (this.awakened) {
-        if (this.x < this.r) { this.x = this.r; this.vx = Math.abs(this.vx); }
-        if (this.x > game.w - this.r) { this.x = game.w - this.r; this.vx = -Math.abs(this.vx); }
-        if (this.y < this.r) { this.y = this.r; this.vy = Math.abs(this.vy); }
-        if (this.y > game.h - this.r) { this.y = game.h - this.r; this.vy = -Math.abs(this.vy); }
-      } else if (this.x < -100 || this.y < -100 || this.x > game.w + 100 || this.y > game.h + 100) {
-        this.dead = true;
+        // 天叢雲：主人公を中心とする巨大な螺旋軌道（外へ広がって戻るブーメラン大車輪）
+        const pl = game.player;
+        const p = 1 - this.life / this.max;
+        const R = 70 + 300 * Math.sin(Math.PI * p);
+        this.orbitA += dt * 4.6;
+        const nx = pl.x + Math.cos(this.orbitA) * R, ny = pl.y + Math.sin(this.orbitA) * R;
+        this.vx = (nx - this.x) / Math.max(dt, 1e-4); this.vy = (ny - this.y) / Math.max(dt, 1e-4);
+        this.x = nx; this.y = ny;
+      } else {
+        this.x += this.vx * dt; this.y += this.vy * dt;
+        if (!game.inView(this.x, this.y, 140)) this.dead = true;
       }
       this.angle = Math.atan2(this.vy, this.vx);
     }
@@ -1206,12 +1258,59 @@
         this.vx *= k; this.vy *= k;
       }
       this.x += this.vx * dt; this.y += this.vy * dt;
-      if (!this.magnet) {
-        this.x = U.clamp(this.x, 8, game.w - 8);
-        this.y = U.clamp(this.y, 8, game.h - 8);
+    }
+    /** 特大魂オーブのティア（1:朱玉 2:金玉 3:虹玉） */
+    get tier() { return this.value >= 80 ? 3 : this.value >= 30 ? 2 : 1; }
+    _drawMerged(ctx, pal, game) {
+      const t = game.realTime;
+      const tier = this.tier;
+      const R = tier === 3 ? 16 : tier === 2 ? 13 : 10;
+      const pulse = 1 + Math.sin(t * 7 + this.ph) * 0.12;
+      ctx.save();
+      ctx.translate(this.x, this.y);
+      if (!pal.inv) {
+        ctx.globalCompositeOperation = 'lighter';
+        const glow = tier === 3 ? C.cyan : tier === 2 ? C.gold : C.crimson;
+        ctx.fillStyle = U.rgba(glow, 0.22);
+        ctx.beginPath(); ctx.arc(0, 0, R * 2.4 * pulse, 0, TAU); ctx.fill();
+        // 脈動リング／回転光輪
+        const rings = tier === 3 ? [C.cyan, C.gold, C.crimson] : tier === 2 ? [C.gold] : [C.crimson];
+        rings.forEach((c, i) => {
+          ctx.save();
+          ctx.rotate(t * (1.6 + i * 0.9) * (i % 2 ? -1 : 1));
+          ctx.strokeStyle = U.rgba(c, 0.85);
+          ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.arc(0, 0, R * (1.35 + i * 0.32) * pulse, 0, TAU * 0.78); ctx.stroke();
+          ctx.restore();
+        });
+        if (tier >= 2) {
+          for (let i = 0; i < 6; i++) {
+            const a = t * 2.4 + i * TAU / 6;
+            ctx.fillStyle = U.rgba(C.gold, 0.8);
+            ctx.fillRect(Math.cos(a) * R * 1.9 - 1.5, Math.sin(a) * R * 1.9 - 1.5, 3, 3);
+          }
+        }
+        if (tier === 3 && Math.random() < 0.5) {
+          ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.lineWidth = 1.2;
+          const a = Math.random() * TAU;
+          ctx.beginPath(); ctx.moveTo(Math.cos(a) * R, Math.sin(a) * R);
+          ctx.lineTo(Math.cos(a + 0.3) * R * 2.2, Math.sin(a + 0.3) * R * 2.2); ctx.stroke();
+        }
+        ctx.globalCompositeOperation = 'source-over';
       }
+      // 二重菱形＋白芯
+      ctx.rotate(t * 1.2);
+      const outer = tier === 3 ? '#FFFFFF' : tier === 2 ? C.gold : C.crimson;
+      ctx.fillStyle = col(pal, outer);
+      ctx.beginPath(); ctx.moveTo(0, -R * 1.3); ctx.lineTo(R, 0); ctx.lineTo(0, R * 1.3); ctx.lineTo(-R, 0); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = col(pal, tier === 1 ? C.gold : tier === 2 ? '#FFF3C4' : C.cyan);
+      ctx.beginPath(); ctx.moveTo(0, -R * 0.8); ctx.lineTo(R * 0.6, 0); ctx.lineTo(0, R * 0.8); ctx.lineTo(-R * 0.6, 0); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = pal.inv ? C.paper : '#FFFFFF';
+      ctx.beginPath(); ctx.arc(0, 0, R * 0.28, 0, TAU); ctx.fill();
+      ctx.restore();
     }
     draw(ctx, pal, game) {
+      if (this.isMerged) { this._drawMerged(ctx, pal, game); return; }
       const s = 3.2 + Math.min(5, Math.sqrt(this.value) * 1.4);
       const pulse = 1 + Math.sin(game.realTime * 6 + this.ph) * 0.12;
       const big = this.value >= 8;
@@ -1397,7 +1496,7 @@
           break;
         case 'vWing':
           this.x += this.vx * dt; this.y += this.vy * dt;
-          if (this.t > 1.2 && (this.x < -260 || this.y < -260 || this.x > game.w + 260 || this.y > game.h + 260)) this.finish();
+          if (this.t > 1.2 && !game.inView(this.x, this.y, 260)) this.finish();
           break;
         case 'spiral':
           this.rot += dt * 0.55;
@@ -1426,14 +1525,14 @@
     opts = opts || {};
     const cfg = CFG.FORMATIONS[type];
     const pl = game.player;
-    const W = game.w, H = game.h;
+    const V = game.view;
     const eo = opts.enemyOpts || {};
     const push = (e) => { game.enemies.push(e); return e; };
     const edge = () => game._edgePoint();
     let f;
     if (type === 'opening') {
       // 主人公の上方220px：火薬樽1＋提灯お化け2を中心に、20体の笠蜘蛛が二重円陣
-      const x = U.clamp(pl.x, 140, W - 140), y = U.clamp(pl.y - 220, 130, H - 140);
+      const x = pl.x, y = pl.y - 220;
       f = new Formation('opening', game, { x, y });
       const barrel = new PowderBarrel(x, y);
       barrel.age = 1;
@@ -1477,8 +1576,10 @@
     } else if (type === 'vWing') {
       // 雁行（V字）で画面を斜めに高速通過
       const corner = U.randInt(0, 3);
-      const sx = corner % 2 === 0 ? -120 : W + 120, sy = corner < 2 ? U.rand(-60, H * 0.35) : U.rand(H * 0.65, H + 60);
-      const tx = W - sx + U.rand(-80, 80), ty = H - sy + U.rand(-80, 80);
+      // 可視範囲の斜め外側から反対側へ横断
+      const vw = V.hw * 2, vh = V.hh * 2;
+      const sx = V.x0 + (corner % 2 === 0 ? -120 : vw + 120), sy = V.y0 + (corner < 2 ? U.rand(-60, vh * 0.35) : U.rand(vh * 0.65, vh + 60));
+      const tx = 2 * V.cx - sx + U.rand(-80, 80), ty = 2 * V.cy - sy + U.rand(-80, 80);
       const L = Math.hypot(tx - sx, ty - sy) || 1;
       const dir = Math.atan2(ty - sy, tx - sx);
       f = new Formation('vWing', game, { x: sx, y: sy, vx: (tx - sx) / L * 215, vy: (ty - sy) / L * 215, rot: dir + Math.PI / 2 });
@@ -1492,7 +1593,7 @@
       }
     } else if (type === 'spiral') {
       const n = U.randInt(cfg.min, cfg.max);
-      const cx = Math.random() < 0.5 ? pl.x : W / 2, cy = Math.random() < 0.5 ? pl.y : H / 2;
+      const cx = Math.random() < 0.5 ? pl.x : V.cx, cy = Math.random() < 0.5 ? pl.y : V.cy;
       f = new Formation('spiral', game, { x: cx, y: cy, scale: 1.25 });
       for (let i = 0; i < n; i++) {
         const th = i * 0.43, R = 110 + i * 8.5;
@@ -1602,7 +1703,7 @@
       this.spdMult = opts.spdMult || 1;
       this.maxHp = Math.round(cfg.hp * this.hpMult);
       this.hp = this.maxHp;
-      this.x = game.w / 2; this.y = -120;
+      this.x = game.view.cx; this.y = game.view.y0 - 120;
       this.r = 40;
       this.cores = [];
       this.t = 0;
@@ -1717,10 +1818,25 @@
       this.telegraphs = this.telegraphs.filter((tg) => tg.t < tg.dur + (tg.linger || 0));
     }
 
+    /** ボス全体（部位・核・拠点）を平行移動 */
+    shift(dx, dy) {
+      this.x += dx; this.y += dy;
+      if (this.segs) for (const sg of this.segs) { sg.x += dx; sg.y += dy; }
+      if (this.home) { this.home.x += dx; this.home.y += dy; }
+      for (const c of this.cores) { c.x += dx; c.y += dy; }
+    }
+    /** 無限マップ：プレイヤーから可視半径×1.5以上離れたら移動速度2.2倍で追跡 */
+    chaseMult(game) {
+      const d = Math.hypot(game.player.x - this.x, game.player.y - this.y);
+      return d > game.view.r * P.BOSS_CHASE_DIST ? P.BOSS_CHASE_SPEED : 1;
+    }
+
     /** 処刑中：膝をつく */
     updateExecution(dt, game) {
-      this.x += (game.w / 2 - this.x) * Math.min(1, dt * 6);
-      this.y += (game.h / 2 - this.y) * Math.min(1, dt * 6);
+      const c = game.execCenter || game.view;
+      const tx = c.x != null ? c.x : c.cx, ty = c.y != null ? c.y : c.cy;
+      const dx = (tx - this.x) * Math.min(1, dt * 6), dy = (ty - this.y) * Math.min(1, dt * 6);
+      this.shift(dx, dy);
     }
   }
 
@@ -1735,10 +1851,11 @@
       this.r = 32;
       this.spacing = 46;
       this.segs = [];
-      for (let i = 0; i < cfg.segments; i++) this.segs.push({ x: game.w / 2, y: -120 - i * this.spacing, r: i === 0 ? 32 : this.segR });
+      const V = game.view;
+      for (let i = 0; i < cfg.segments; i++) this.segs.push({ x: V.cx, y: V.y0 - 120 - i * this.spacing, r: i === 0 ? 32 : this.segR });
       this.heading = Math.PI / 2;
       this.speed = 150 * this.spdMult;
-      this.target = { x: game.w / 2, y: game.h * 0.4 };
+      this.target = { x: V.cx, y: V.y0 + V.hh * 0.8 };
       this.wanderT = 0;
       this.sprayT = 2.5;
       this.chargeT = 7;
@@ -1759,7 +1876,7 @@
         head.x = this.x; head.y = this.y;
       } else if (this.entering > 0) {
         head.y += 140 * dt;
-        head.x = game.w / 2 + Math.sin(this.t * 3) * 30;
+        head.x = game.view.cx + Math.sin(this.t * 3) * 30;
       } else if (active) {
         if (this.charge) {
           const c = this.charge;
@@ -1775,17 +1892,19 @@
           // うねりながら徘徊
           this.wanderT -= dt;
           const dtx = this.target.x - head.x, dty = this.target.y - head.y;
-          if (this.wanderT <= 0 || Math.hypot(dtx, dty) < 60) {
+          const chase = this.chaseMult(game);
+          if (this.wanderT <= 0 || Math.hypot(dtx, dty) < 60 || chase > 1) {
             this.wanderT = 2.4;
             const pl = game.player;
-            this.target = Math.random() < 0.45
+            const V = game.view;
+            this.target = Math.random() < 0.45 || chase > 1
               ? { x: pl.x, y: pl.y }
-              : { x: U.rand(90, game.w - 90), y: U.rand(90, game.h - 90) };
+              : { x: U.rand(V.x0 + 90, V.x1 - 90), y: U.rand(V.y0 + 90, V.y1 - 90) };
           }
           const want = Math.atan2(this.target.y - head.y, this.target.x - head.x) + Math.sin(this.t * 2.6) * 0.6;
           this.heading += U.clamp(U.angleDiff(this.heading, want), -2.4 * dt, 2.4 * dt);
-          head.x += Math.cos(this.heading) * this.speed * dt;
-          head.y += Math.sin(this.heading) * this.speed * dt;
+          head.x += Math.cos(this.heading) * this.speed * chase * dt;
+          head.y += Math.sin(this.heading) * this.speed * chase * dt;
           // 攻撃①：胴体から全方位赤弾ばら撒き
           this.sprayT -= dt;
           if (this.sprayT <= 0) {
@@ -1804,21 +1923,17 @@
             this.chargeT = 9 - Math.min(3, this.level * 0.6);
             const pl = game.player;
             const ang = Math.atan2(pl.y - head.y, pl.x - head.x);
-            const len = Math.hypot(game.w, game.h);
+            const len = Math.hypot(game.view.hw, game.view.hh) * 2;
             this.charge = { ang, t: 0, wait: 1.3, len };
             this.chant = { name: '黒鉄大蛇突', t: 0, dur: 1.3 };
             this.telegraphs.push({ type: 'line', x1: head.x, y1: head.y, x2: head.x + Math.cos(ang) * len, y2: head.y + Math.sin(ang) * len, w: 60, t: 0, dur: 1.3, chant: true });
           }
         }
-        // 画面内に留める（チャージ中は外れてもラップ）
-        if (head.x < -80 || head.x > game.w + 80 || head.y < -80 || head.y > game.h + 80) {
+        // 無限マップ：画面外へ突き抜けたらチャージを終えてプレイヤーへ向き直る（壁反射なし）
+        if (!game.inView(head.x, head.y, 120)) {
           if (this.charge && this.charge.t > this.charge.wait) { this.charge = null; this.chant = null; }
-          head.x = U.clamp(head.x, 40, game.w - 40);
-          head.y = U.clamp(head.y, 40, game.h - 40);
-          this.heading += Math.PI;
+          if (!this.charge) this.heading = Math.atan2(game.player.y - head.y, game.player.x - head.x);
         }
-        head.x = U.clamp(head.x, -60, game.w + 60);
-        head.y = U.clamp(head.y, -60, game.h + 60);
       }
       // 節の追従（チェーン拘束）
       for (let i = 1; i < this.segs.length; i++) {
@@ -1904,7 +2019,7 @@
       this.orbit = cfg.orbit;
       this.armR = cfg.armR;
       this.armRot = 0;
-      this.home = { x: game.w / 2, y: game.h * 0.42 };
+      this.home = { x: game.view.cx, y: game.view.cy - game.view.hh * 0.16 };
       this.spiralT = 3; this.spiral = 0; this.spiralAng = 0;
       this.slamT = 5;
       this.chantT = 12;
@@ -1922,9 +2037,16 @@
         this.y += (this.home.y - this.y) * Math.min(1, dt * 2.2);
         this.x = this.home.x;
       } else if (active) {
-        this.home.x = game.w / 2; this.home.y = game.h * 0.42;
-        this.x = this.home.x + Math.sin(this.t * 0.5) * game.w * 0.18;
-        this.y = this.home.y + Math.sin(this.t * 1.0) * game.h * 0.08;
+        // 拠点はカメラ中心のやや上へゆっくり追従（離れすぎたら2.2倍速）
+        const V = game.view;
+        const tx = V.cx, ty = V.cy - V.hh * 0.16;
+        const hd = Math.hypot(tx - this.home.x, ty - this.home.y);
+        if (hd > 1) {
+          const step = Math.min(hd, 70 * this.chaseMult(game) * dt);
+          this.home.x += (tx - this.home.x) / hd * step; this.home.y += (ty - this.home.y) / hd * step;
+        }
+        this.x = this.home.x + Math.sin(this.t * 0.5) * V.hw * 0.36;
+        this.y = this.home.y + Math.sin(this.t * 1.0) * V.hh * 0.16;
         const bs = 1 + this.level * 0.12;
         // 攻撃①：火炎弾の螺旋連射
         this.spiralT -= dt;
@@ -2085,7 +2207,7 @@
       this.r = cfg.bodyR;
       this.orbit = cfg.orbit;
       this.mirrorRot = 0;
-      this.home = { x: game.w / 2, y: game.h * 0.35 };
+      this.home = { x: game.view.cx, y: game.view.cy - game.view.hh * 0.3 };
       this.teleT = 5;
       this.fade = 1;
       this.teleporting = 0;
@@ -2118,8 +2240,9 @@
           this.fade = Math.abs(this.teleporting - 0.3) / 0.3;
           if (this.teleporting <= 0.3 && !this.teleDone) {
             this.teleDone = true;
-            this.x = U.rand(120, game.w - 120);
-            this.y = U.rand(100, game.h * 0.6);
+            const V = game.view;
+            this.x = U.rand(V.x0 + 120, V.x1 - 120);
+            this.y = U.rand(V.y0 + 100, V.y0 + V.hh * 1.2);
           }
           if (this.teleporting <= 0) { this.fade = 1; this.teleporting = 0; }
         } else {
@@ -2127,6 +2250,8 @@
           this.y += Math.cos(this.t * 1.1) * 20 * dt;
           this.teleT -= dt;
           if (this.teleT <= 0 && !this.chant) { this.teleT = 6; this.teleporting = 0.6; this.teleDone = false; }
+          // 離れすぎたら即座に瞬身で追跡
+          if (this.chaseMult(game) > 1 && this.teleporting <= 0) { this.teleporting = 0.6; this.teleDone = false; this.teleT = 6; }
         }
         const bs = 1 + this.level * 0.12;
         // 鏡からの扇状弾
@@ -2144,7 +2269,7 @@
         if (this.riftT <= 0 && !this.chant) {
           this.riftT = 8 - Math.min(3, this.level * 0.6);
           this.chant = { name: '次元喰らい・三界断', t: 0, dur: 1.2 };
-          const L = Math.hypot(game.w, game.h);
+          const L = Math.hypot(game.view.hw, game.view.hh) * 2;
           for (let i = 0; i < 3; i++) {
             const a = U.rand(0, Math.PI);
             const ox = pl.x + U.rand(-90, 90) * (i === 0 ? 0 : 1), oy = pl.y + U.rand(-90, 90) * (i === 0 ? 0 : 1);
@@ -2172,7 +2297,7 @@
           const base = Math.random() * TAU;
           for (let i = 0; i < 4; i++) {
             const a = base + (i / 4) * TAU;
-            const x = U.clamp(pl.x + Math.cos(a) * 210, 30, game.w - 30), y = U.clamp(pl.y + Math.sin(a) * 210, 30, game.h - 30);
+            const x = pl.x + Math.cos(a) * 210, y = pl.y + Math.sin(a) * 210;
             const cl = new SaintClone(x, y, { tx: pl.x, ty: pl.y, boss: this });
             this.clones.push(cl);
             game.enemies.push(cl);
@@ -2243,7 +2368,7 @@
   ZI.Entities = {
     Player, Enemy, SwarmSpider, SniperAshigaru, SplitterNinja, BombLantern, ArmoredOni, BerserkRonin, SaintClone,
     Gimmick, PowderBarrel, ThunderLantern, VoidCrystal,
-    EnemyBullet, HomingKunai, CrescentWave, SoulGem, MiniBlackHole, Scroll, Formation, spawnFormation,
+    EnemyBullet, CrescentWave, AfterimageSlash, SoulGem, MiniBlackHole, Scroll, Formation, spawnFormation,
     WeakCore, Boss, BossCentipede, BossSixArmGeneral, BossSwordSaint,
     BOSS_CLASSES, ENEMY_CLASSES, GIMMICK_CLASSES
   };

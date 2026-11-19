@@ -51,9 +51,9 @@
     DRAG_IAI_TOUCH_COUNT: 2,
 
     // 3.2 アクションB：迅雷
-    PINBALL_DASH_DIST: 280,
-    PINBALL_HOMING_RANGE: 340,
-    PINBALL_HOMING_ANGLE: 32,          // 度
+    PINBALL_DASH_DIST: 310,            // v3：広視界・無限マップ向けに延長
+    PINBALL_HOMING_RANGE: 390,
+    PINBALL_HOMING_ANGLE: 38,          // 度
     // v2：集中力コスト・息切れ・帯電
     PINBALL_FOCUS_COST: 18,
     PINBALL_REFUND_HIT: 10,
@@ -66,7 +66,7 @@
     CHARGE_BLAST_MULT: [1, 1.3, 1.6, 2.0],
     PINBALL_DASH_TIME: 0.045,
     PINBALL_INVULN: 0.25,
-    PINBALL_CAPSULE_WIDTH: 38,
+    PINBALL_CAPSULE_WIDTH: 44,
     PINBALL_DAMAGE: 1.5,
     CHAIN_WINDOW: 0.35,
     CHAIN_TIMESCALE: 0.20,
@@ -81,7 +81,7 @@
     FOCUS_COST_PER_PX: 0.038,
     FOCUS_COST_PER_SEC: 12,
     FOCUS_LOCK_GAIN: 24,
-    LOCK_RADIUS: 52,
+    LOCK_RADIUS: 58,
     IAI_STEP_MAX: 0.024,               // stepDuration = min(0.024, 0.22 / max(1, n))
     IAI_TOTAL_MAX: 0.22,
     SHEATHE_PAUSE: 0.12,
@@ -102,9 +102,15 @@
     VOID_MAX: 140,
 
     // 3.5 弾斬り
-    BULLET_RADIUS: 7,
-    KUNAI_SPEED: 620,
-    KUNAI_DAMAGE: 1.0,
+    BULLET_RADIUS: 7,                  // 当たり判定（プレイヤー有利のまま据え置き）
+    BULLET_DRAW_RADIUS: 8.5,           // v3：描画サイズのみ拡大して視認性を確保
+    // v3 弾斬り：斬り返し衝撃波（手動カウンター）
+    PARRY_WAVE_RADIUS: 110,
+    PARRY_WAVE_DAMAGE: 1.5,
+    PARRY_WAVE_ARC: 70,                // 度（扇の半角）
+    PARRY_FOCUS: 20,
+    PARRY_ULT: 3.5,
+    PARRY_SCORE: 80,
     PARRY_COMBO: 2,
 
     // 4.2 フェーズ進化
@@ -143,7 +149,38 @@
     // 9.1 Juice
     HITSTOP_PINBALL: 25,
     HITSTOP_BIG: 160,
-    ZOOM_HOLD: 1.04,
+    // v3 広視界ズーム＆滑らかカメラ
+    BASE_ZOOM: 0.70,
+    PHASE2_ZOOM: 0.66,
+    PHASE3_ZOOM: 0.62,
+    AIM_ZOOM_ADD: 0.03,
+    ZOOM_LERP: 3.5,
+    MOBILE_ZOOM_MULT: 1.08,
+    MOBILE_ZOOM_MAX: 0.78,
+    CAM_FOLLOW_NORMAL: 8.5,
+    CAM_FOLLOW_DASH: 5.0,
+    CAM_FOLLOW_IAI: 4.5,
+    CAM_FOLLOW_ULT: 6.0,
+    CAM_LEASH: 0.38,
+    // v3 無限マップ
+    SPAWN_RING_MIN: 90,
+    SPAWN_RING_MAX: 220,
+    SPAWN_FORWARD_WEIGHT: 0.65,
+    WRAP_DIST: 1.85,
+    WRAP_SPAWN: 110,
+    WRAP_ANGLE: 75,                    // 度
+    BOSS_CHASE_DIST: 1.5,
+    BOSS_CHASE_SPEED: 2.2,
+    BOSS_WARP_DIST: 2.2,
+    CULL_MARGIN: 160,
+    INDICATOR_MARGIN: 28,
+    WAGARA_PARALLAX: 0.45,
+    // v3 画面外ジェム統合
+    OFFSCREEN_GEM_MERGE_THRESHOLD: 35,
+    GEM_MERGE_INTERVAL: 0.4,
+    GEM_MERGE_MIN: 15,
+    GEM_MERGE_MAX_ORBS: 4,
+    WIDE_VACUUM_KILLS: 10,
     ZOOM_PUNCH_MIN: 1.08,
     ZOOM_PUNCH_MAX: 1.14,
     ZOOM_RETURN: 0.25,
@@ -171,7 +208,7 @@
     PLAYER_MOVE_SPEED: 240,           // ホバー移動・WASD・タッチドラッグ共通
     HOVER_STOP_DIST: 18,
     // 見切り（GRAZE!）
-    GRAZE_RANGE: 28,
+    GRAZE_RANGE: 32,
     GRAZE_FOCUS: 25,
     GRAZE_ULT: 4,
     GRAZE_SCORE: 500,
@@ -222,28 +259,28 @@
   const BLADES = {
     byakuya: {
       id: 'byakuya', name: '無銘・白夜', en: 'BYAKUYA', cost: 0,
-      color: '#00F0FF', core: '#FFFFFF', atk: 1.0, hits: 1, hp: 4, lockRadius: 52,
+      color: '#00F0FF', core: '#FFFFFF', atk: 1.0, hits: 1, hp: 4, lockRadius: 58,
       dashMult: 1, widthMult: 1, focusCostMult: 1, flickCostMult: 1, chargeMult: 1, alwaysVoid: false, startSkill: null, healPer100: false,
       style: '標準バランス型',
-      desc: '基礎攻撃力1.0／初期HP4／ロックオン照準52px。すべてのアクションが高水準で使いやすい王道の一振り。'
+      desc: '基礎攻撃力1.0／初期HP4／ロックオン照準58px。すべてのアクションが高水準で使いやすい王道の一振り。'
     },
     guren: {
       id: 'guren', name: '双影・紅蓮', en: 'GUREN TWIN BLADES', cost: 800,
-      color: '#FF1E42', core: '#FFE4E8', atk: 0.75, hits: 2, hp: 4, lockRadius: 52,
+      color: '#FF1E42', core: '#FFE4E8', atk: 0.75, hits: 2, hp: 4, lockRadius: 58,
       dashMult: 1.35, widthMult: 1, focusCostMult: 1, flickCostMult: 0.7, chargeMult: 2, alwaysVoid: false, startSkill: null, healPer100: false,
       style: 'アクションB特化・二刀流',
       desc: '攻撃力0.75×2回ヒット／HP4。全攻撃2連ヒットでコンボと帯電スタックが2倍速、迅雷の集中消費-30%・突進距離+35%。'
     },
     dankai: {
       id: 'dankai', name: '大太刀・断界', en: 'DANKAI GREAT KATANA', cost: 1800,
-      color: '#FFBE2E', core: '#FFF6DE', atk: 1.6, hits: 1, hp: 5, lockRadius: 52,
+      color: '#FFBE2E', core: '#FFF6DE', atk: 1.6, hits: 1, hp: 5, lockRadius: 58,
       dashMult: 1, widthMult: 2, focusCostMult: 1, flickCostMult: 1, chargeMult: 1, alwaysVoid: true, startSkill: null, healPer100: false,
       style: 'アクションD特化・空間破壊',
       desc: '攻撃力1.6／HP5。斬撃幅2倍。ランクに関わらず全ての居合と3連ピンボールの軌跡に次元斬が発生。'
     },
     shiden: {
       id: 'shiden', name: '妖刀・紫電', en: 'SHIDEN CURSED BLADE', cost: 3200,
-      color: '#D946EF', core: '#00F0FF', atk: 1.4, hits: 1, hp: 3, lockRadius: 52,
+      color: '#D946EF', core: '#00F0FF', atk: 1.4, hits: 1, hp: 3, lockRadius: 58,
       dashMult: 1, widthMult: 1, focusCostMult: 0.6, flickCostMult: 1, chargeMult: 1, alwaysVoid: false, startSkill: 'lightning', healPer100: true,
       style: 'アクションA特化・超火力',
       desc: '攻撃力1.4／HP3。集中ゲージ消費40%軽減、雷鳴抜刀Lv1所持で開始。100チェインごとにHP1回復。'
@@ -276,9 +313,9 @@
       levelDesc: (lv) => `迅雷・居合の終点から貫通真空刃（${SKILL_TABLE.crescent.count[lv - 1]}発／サイズ×${SKILL_TABLE.crescent.size[lv - 1].toFixed(2)}）`
     },
     {
-      id: 'parry', no: 5, name: '弾返しの達人', en: 'Parry Master', icon: '返',
-      kunai: [2, 3, 4, 5, 6], autoEvery: 10,
-      levelDesc: (lv) => `弾斬り時の追尾クナイ${SKILL_TABLE.parry.kunai[lv - 1]}本＋10体撃破ごとにクナイ自動発射`
+      id: 'tsubame', no: 5, name: '燕返し・二重一閃', en: 'Tsubame Gaeshi', icon: '燕',
+      delay: 0.22, dmg: [0.45, 0.60, 0.75, 0.90, 1.10], width: [0.10, 0.20, 0.30, 0.40, 0.55], parryR: [0.20, 0.40, 0.60, 0.80, 1.00],
+      levelDesc: (lv) => `迅雷・居合の0.22秒後に同じ軌道を残光が二重斬撃（${Math.round(SKILL_TABLE.tsubame.dmg[lv - 1] * 100)}%／幅+${Math.round(SKILL_TABLE.tsubame.width[lv - 1] * 100)}%）・弾斬り衝撃波+${Math.round(SKILL_TABLE.tsubame.parryR[lv - 1] * 100)}%`
     },
     {
       id: 'crimson', no: 6, name: '紅蓮爆砕', en: 'Crimson Nova', icon: '爆',
@@ -307,7 +344,7 @@
     {
       id: 'senju', base: 'shadow', name: '【極意】千手観音・無間連斬', icon: '千',
       cond: '二天一流・影打 Lv5 ＋ 神速の足捌き Lv1以上',
-      desc: '分身が常時5体に増加。斬った敵に八方から分身が自動で乱舞斬りを浴びせ続ける。',
+      desc: '自分が斬撃を当てるたびに、最大5体の影分身が対象へ四方から同時に交差追撃を叩き込む。',
       check: (g) => g.skillLv('shadow') >= 5 && g.skillLv('godspeed') >= 1
     },
     {
@@ -325,14 +362,14 @@
     {
       id: 'amenomurakumo', base: 'crescent', name: '【極意】天叢雲・大車輪', icon: '叢',
       cond: '真空三日月波 Lv5 ＋ 虚空の裂け目 Lv1以上',
-      desc: '真空波が画面端で反射し3秒間旋回。通過軌跡にミニ次元斬を残す。',
+      desc: '真空波が主人公を中心とする巨大な螺旋軌道を2.8秒間旋回し、通過軌跡にミニ次元斬を残す。',
       check: (g) => g.skillLv('crescent') >= 5 && g.skillLv('voidRift') >= 1
     },
     {
-      id: 'yata', base: 'parry', name: '【極意】八咫鏡・千本クナイ陣', icon: '鏡',
-      cond: '弾返しの達人 Lv5 ＋ 累計20回以上の弾斬りまたは見切り',
-      desc: '周囲に8本の回転光刃が展開し敵弾を自動パリィ。毎秒大量の追尾クナイをばら撒く。',
-      check: (g) => g.skillLv('parry') >= 5 && (g.run.totalParries + g.run.totalGrazes) >= 20
+      id: 'musou', base: 'tsubame', name: '【極意】燕返し・無想連閃', icon: '閃',
+      cond: '燕返し・二重一閃 Lv5 ＋ 居合の極意 Lv1以上',
+      desc: '斬撃の0.16秒後と0.30秒後に、元の軌道＋左右に交差する三連・無想交差斬が炸裂。撃破ごとに集中+4。',
+      check: (g) => g.skillLv('tsubame') >= 5 && g.skillLv('wideIai') >= 1
     },
     {
       id: 'kagutsuchi', base: 'crimson', name: '【極意】迦具土・連鎖超新星', icon: '迦',
@@ -349,7 +386,7 @@
     {
       id: 'shukuchi', base: 'godspeed', name: '【極意】縮地・光速残像陣', icon: '縮',
       cond: '神速の足捌き Lv5 ＋ 二天一流・影打 Lv1以上',
-      desc: '軌跡に3秒燃える蒼炎の残像ラインを残し、迅雷が敵を自動で次々ホーミング連鎖する。',
+      desc: '迅雷の突進距離+50%・高速化、軌跡に3秒燃える蒼炎ラインを残し、チェイン受付時間を0.65秒に延長。',
       check: (g) => g.skillLv('godspeed') >= 5 && g.skillLv('shadow') >= 1
     }
   ];

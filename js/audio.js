@@ -387,6 +387,18 @@
       this._osc({ type: 'triangle', f0: f * 1.5, dur: 0.06, vol: 0.035, attack: 0.002, sends: { dry: 0.5, wet: 0.6 } });
     }
 
+    /** 特大魂オーブ回収：通常ジェムよりリッチな和音チャイム（ティアで段数増） */
+    playOrbPickup(tier) {
+      if (!this.ready || !this._rate('orb', 6)) return;
+      const base = CFG.AUDIO.GEM_BASE;
+      const chord = tier >= 3 ? [0, 4, 7, 12, 16, 19] : tier === 2 ? [0, 4, 7, 12] : [0, 7, 12];
+      chord.forEach((st, i) => {
+        const f = Math.min(7200, this._semi(base, st));
+        this._osc({ type: 'sine', f0: f, dur: 0.6, vol: 0.075, attack: 0.003, delay: i * 0.035, sends: { dry: 0.7, wet: 1.1 } });
+        this._osc({ type: 'triangle', f0: f * 2, dur: 0.35, vol: 0.03, attack: 0.002, delay: i * 0.035, sends: { dry: 0.4, wet: 1.2 } });
+      });
+    }
+
     /** 竜巻バキューム：スロット大当たりのような高速クリスタル連続音 */
     playTornado(count) {
       if (!this.ready) return;
@@ -540,12 +552,6 @@
         this._osc({ type: 'sawtooth', f0: f, dur: 2.5, vol: 0.09, filter: 'lowpass', ff0: 5000, ff1: 600, delay: 0.12 + i * 0.07, sends: { dry: 0.7, wet: 1.2 } });
         this._osc({ type: 'sine', f0: f * 2, dur: 2.8, vol: 0.055, delay: 0.16 + i * 0.08, sends: { dry: 0.5, wet: 1.3 } });
       });
-    }
-
-    playKunai() {
-      if (!this.ready || !this._rate('kun', 30)) return;
-      this._noise({ filter: 'bandpass', q: 3.5, f0: 6000, f1: 2000, dur: 0.04, vol: 0.09, sends: { dry: 1, wet: 0.35 } });
-      this._osc({ type: 'sine', f0: 3600, f1: 2200, dur: 0.06, vol: 0.045, sends: { dry: 0.5, wet: 1 } });
     }
 
     playCounter() {

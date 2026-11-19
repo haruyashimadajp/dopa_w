@@ -483,9 +483,9 @@
         g.addColorStop(0.5, U.rgba(col, 0.9 * a));
         g.addColorStop(1, U.rgba(col, 0));
         ctx.fillStyle = g;
-        ctx.fillRect(-w, -1200, w * 2, 1200);
+        ctx.fillRect(-w, -2000, w * 2, 2000);
         ctx.fillStyle = `rgba(255,255,255,${a})`;
-        ctx.fillRect(-w * 0.18, -1200, w * 0.36, 1200);
+        ctx.fillRect(-w * 0.18, -2000, w * 0.36, 2000);
       } else {
         const g = ctx.createLinearGradient(0, -w, 0, w);
         g.addColorStop(0, U.rgba(col, 0));
@@ -503,8 +503,9 @@
   /* FloatingText：ダメージ数値・漢字コールアウト */
   class FloatingText {
     constructor() { this.dead = true; }
-    reset(x, y, text, color, size, kind, life) {
+    reset(x, y, text, color, size, kind, life, screen) {
       this.x = x; this.y = y; this.text = text; this.color = color;
+      this.screen = !!screen;   // v3：true ならスクリーン座標（HUD系の告知）
       this.size = size; this.kind = kind || 'dmg';
       this.life = life || (this.kind === 'callout' ? 1.15 : this.kind === 'info' ? 1.2 : 0.6);
       this.max = this.life;
@@ -593,6 +594,42 @@
   /* ------------------------------------------------------------------------
    * EffectManager：全エフェクトの更新と上限キャップ管理
    * ---------------------------------------------------------------------- */
+  /* FanWave：弾斬り時の扇形衝撃波（v3） */
+  class FanWave {
+    constructor(x, y, dir, half, R, life, color) {
+      this.x = x; this.y = y; this.dir = dir; this.half = half; this.R = R;
+      this.life = life; this.max = life; this.color = color; this.dead = false;
+    }
+    update(dt) { this.life -= dt; if (this.life <= 0) this.dead = true; }
+    draw(ctx, pal) {
+      const p = 1 - this.life / this.max;
+      const a = 1 - p;
+      const r = this.R * U.easeOutCubic(Math.min(1, p * 1.4));
+      const col = pal.inv ? C.crimson : this.color;
+      ctx.save();
+      ctx.translate(this.x, this.y);
+      // 扇形の淡い面
+      ctx.fillStyle = U.rgba(col, 0.22 * a);
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.arc(0, 0, r, this.dir - this.half, this.dir + this.half);
+      ctx.closePath();
+      ctx.fill();
+      // 前縁の光る弧（二重）
+      ctx.lineCap = 'round';
+      ctx.strokeStyle = U.rgba(col, 0.9 * a);
+      ctx.lineWidth = 7 * a + 2;
+      ctx.beginPath(); ctx.arc(0, 0, r, this.dir - this.half, this.dir + this.half); ctx.stroke();
+      ctx.strokeStyle = pal.inv ? U.rgba(C.ink, a) : `rgba(255,255,255,${0.95 * a})`;
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(0, 0, r, this.dir - this.half, this.dir + this.half); ctx.stroke();
+      ctx.strokeStyle = U.rgba(col, 0.45 * a);
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(0, 0, r * 0.72, this.dir - this.half * 0.85, this.dir + this.half * 0.85); ctx.stroke();
+      ctx.restore();
+    }
+  }
+
   class EffectManager {
     constructor() {
       this.decals = [];
@@ -605,6 +642,7 @@
       this.flames = [];
       this.cracks = [];
       this.corpses = [];
+      this.fans = [];      // v3：弾斬り衝撃波
       this.phase = 1;      // 現在のトランスフェーズ（残光の長さに使用）
       this.goldLeaf = false;
       // 固定長プール（パーティクル800／テキスト80）
@@ -625,7 +663,7 @@
     clear() {
       this.decals.length = 0; this.halves.length = 0; this.rifts.length = 0; this.trails.length = 0;
       this.rings.length = 0; this.bolts.length = 0; this.beams.length = 0; this.flames.length = 0; this.cracks.length = 0;
-      this.corpses.length = 0;
+      this.corpses.length = 0; this.fans.length = 0;
       for (const p of this.particles) { p.dead = true; this.particlePool.push(p); }
       this.particles.length = 0;
       for (const t of this.texts) { t.dead = true; this.textPool.push(t); }
@@ -723,21 +761,26 @@
         this.particle(x, y, Math.cos(a) * s, Math.sin(a) * s, U.rand(0.35, 0.8), U.rand(2, 5), '#121620', 2, 4);
       }
     }
-    text(x, y, text, color, size, kind, life) {
+    text(x, y, text, color, size, kind, life, screen) {
       let t = this.textPool.pop();
       if (!t) {
         t = this.texts.shift();
         if (!t) return null;
       }
-      t.reset(x, y, text, color, size, kind, life);
+      t.reset(x, y, text, color, size, kind, life, screen);
       this.texts.push(t);
       return t;
     }
-    callout(x, y, text, color, size, now) {
+    callout(x, y, text, color, size, now, screen) {
       // 同時多発時は少しずらして重なりを回避
       const dy = (now - this.lastCalloutT < 0.4) ? -46 : 0;
       this.lastCalloutT = now;
-      return this.text(x, y + dy, text, color, size || 50, 'callout');
+      return this.text(x, y + dy, text, color, size || 50, 'callout', undefined, screen);
+    }
+    /** v3：弾斬りの斬り返し衝撃波（扇形に広がる光の弧） */
+    fan(x, y, dir, half, R, life, color) {
+      if (this.fans.length > 24) this.fans.shift();
+      this.fans.push(new FanWave(x, y, dir, half, R, life, color));
     }
 
     update(dtFx, dtReal) {
@@ -753,6 +796,8 @@
       upd(this.flames, dtFx);
       upd(this.cracks, dtReal);
       upd(this.corpses, dtFx);
+      upd(this.fans, dtReal);
+      U.compact(this.fans, (o) => !o.dead);
       U.compact(this.decals, (o) => !o.dead);
       U.compact(this.halves, (o) => !o.dead);
       U.compact(this.trails, (o) => !o.dead);
@@ -822,6 +867,9 @@
       this.caC = document.createElement('canvas');
       this.caRctx = this.caR.getContext('2d');
       this.caCctx = this.caC.getContext('2d');
+      // v3：和柄の無限スクロール用タイル
+      this.wagara = document.createElement('canvas');
+      this.wagaraKey = null;
       this.resize();
     }
 
@@ -1162,6 +1210,9 @@
       }
       ctx.restore();
 
+      // v3：視差スクロールする和柄（ワールド移動の手応え）
+      this._drawWagara(ctx, game, tr);
+
       // BGMキック同期の背景ビート波紋（Rank A以上で鮮烈に広がる）
       if (this.beatRings.length) {
         ctx.save();
@@ -1213,6 +1264,88 @@
       if (game.bulletFx > 0.01) {
         ctx.fillStyle = `rgba(3,4,6,${0.72 * game.bulletFx})`;
         ctx.fillRect(-40, -40, w + 80, h + 80);
+      }
+    }
+
+    /* -------- v3：和柄の視差タイル（麻の葉／七宝／青海波） -------- */
+    _buildWagara(theme) {
+      const T = 96;
+      const kind = theme === 'bamboo' ? 'asanoha' : theme === 'castle' ? 'shippo' : theme === 'void' ? 'seigaiha' : 'asanoha';
+      const key = kind + ':' + this.dpr;
+      if (this.wagaraKey === key) return;
+      this.wagaraKey = key;
+      this.wagaraT = T;
+      const dpr = this.dpr;
+      const cv = this.wagara;
+      cv.width = Math.ceil(T * dpr); cv.height = Math.ceil(T * dpr);
+      const g = cv.getContext('2d');
+      g.setTransform(dpr, 0, 0, dpr, 0, 0);
+      g.clearRect(0, 0, T, T);
+      g.strokeStyle = '#FFFFFF';
+      g.lineWidth = 1;
+      g.lineCap = 'round';
+      if (kind === 'asanoha') {
+        // 麻の葉：六芒の放射線を正方タイルに近似
+        const h = T / 2;
+        const star = (cx, cy, r) => {
+          for (let i = 0; i < 6; i++) {
+            const a = i * Math.PI / 3 + Math.PI / 6;
+            g.beginPath(); g.moveTo(cx, cy); g.lineTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r); g.stroke();
+          }
+        };
+        for (const [x, y] of [[0, 0], [T, 0], [0, T], [T, T], [h, h]]) star(x, y, h * 1.05);
+        g.beginPath(); g.moveTo(0, h); g.lineTo(T, h); g.stroke();
+        g.beginPath(); g.moveTo(h, 0); g.lineTo(0, h); g.lineTo(h, T); g.lineTo(T, h); g.closePath(); g.stroke();
+      } else if (kind === 'shippo') {
+        // 七宝：重なり合う円
+        const r = T / 2;
+        for (const [x, y] of [[0, 0], [T, 0], [0, T], [T, T], [r, r], [r, 0], [0, r], [T, r], [r, T]]) {
+          g.beginPath(); g.arc(x, y, r * 0.71, 0, TAU); g.stroke();
+        }
+      } else {
+        // 青海波：同心円弧の鱗
+        const r = T / 2;
+        const scale = (cx, cy) => {
+          for (let k = 4; k >= 1; k--) {
+            g.beginPath(); g.arc(cx, cy, r * k / 4, Math.PI, TAU); g.stroke();
+          }
+        };
+        for (const [x, y] of [[0, r], [T, r], [r, T], [0, T + r], [T, T + r], [r, 0 + 0.01], [-r, T], [T + r, T]]) scale(x, y);
+      }
+    }
+
+    /** ワールド座標に対して 0.45 倍速で流れる和柄（スクリーン空間でタイリング） */
+    _drawWagara(ctx, game, tr) {
+      const theme = game.stage ? game.stage.theme : 'void';
+      this._buildWagara(theme);
+      const cam = game.camera;
+      const z = cam.zoom;
+      const T = this.wagaraT * Math.max(0.6, z * 1.25);
+      const par = P.WAGARA_PARALLAX;
+      const mod = (v, m) => ((v % m) + m) % m;
+      const ox = mod(-cam.x * par * z + cam.sx, T) - T;
+      const oy = mod(-cam.y * par * z + cam.sy, T) - T;
+      const w = this.w, h = this.h;
+      ctx.save();
+      ctx.globalAlpha = Math.min(0.2, 0.05 + (tr.alpha || 0.1) * 0.35) * (tr.ph >= 2 ? 1.3 : 1);
+      if (tr.ph >= 2) ctx.globalCompositeOperation = 'lighter';
+      for (let y = oy; y < h; y += T) {
+        for (let x = ox; x < w; x += T) ctx.drawImage(this.wagara, x, y, T, T);
+      }
+      ctx.restore();
+    }
+
+    /** ワールド等倍で流れる淡い地面ドット（移動感の基準） */
+    _drawGroundDots(ctx, game, pal) {
+      const V = game.view;
+      const S = 140;
+      const x0 = Math.floor(V.x0 / S) * S, y0 = Math.floor(V.y0 / S) * S;
+      ctx.fillStyle = pal.inv ? 'rgba(9,10,15,0.10)' : 'rgba(160,180,215,0.10)';
+      for (let y = y0; y <= V.y1; y += S) {
+        for (let x = x0; x <= V.x1; x += S) {
+          const k = ((x / S) & 1) ^ ((y / S) & 1);
+          ctx.fillRect(x - 1.5, y - 1.5, k ? 3 : 2, k ? 3 : 2);
+        }
       }
     }
 
@@ -1463,12 +1596,13 @@
     }
 
     /* -------- Layer 10 パーティクル描画 -------- */
-    _drawParticles(ctx, fx, pal) {
+    _drawParticles(ctx, fx, pal, vis) {
       const ps = fx.particles;
+      const ok = vis || (() => true);
       // 墨粒（通常合成）
       for (let i = 0; i < ps.length; i++) {
         const p = ps[i];
-        if (p.kind !== 2) continue;
+        if (p.kind !== 2 || !ok(p)) continue;
         const a = p.life / p.max;
         ctx.fillStyle = pal.inv ? `rgba(9,10,15,${a})` : `rgba(18,22,32,${0.85 * a})`;
         ctx.beginPath(); ctx.arc(p.x, p.y, p.size * (0.6 + a * 0.4), 0, TAU); ctx.fill();
@@ -1478,7 +1612,7 @@
       ctx.lineCap = 'round';
       for (let i = 0; i < ps.length; i++) {
         const p = ps[i];
-        if (p.kind === 2) continue;
+        if (p.kind === 2 || !ok(p)) continue;
         const a = p.life / p.max;
         const col = pal.inv ? (p.kind === 3 ? C.ink : C.crimson) : p.color;
         if (p.kind === 0) {
@@ -1510,7 +1644,15 @@
       ctx.save();
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      for (const t of fx.texts) {
+      const game = this._game;
+      for (const t0 of fx.texts) {
+        const t = t0;
+        let tx = t.x, ty = t.y;
+        if (!t.screen && game) {
+          const sp = game.worldToScreen(t.x, t.y);
+          tx = sp.x; ty = sp.y;
+          if (tx < -200 || ty < -100 || tx > this.w + 200 || ty > this.h + 100) continue;
+        }
         const p = 1 - t.life / t.max;
         const a = t.life < 0.25 ? t.life / 0.25 : 1;
         let scale = 1;
@@ -1523,30 +1665,30 @@
           ctx.lineJoin = 'round';
           ctx.lineWidth = Math.max(4, size * 0.16);
           ctx.strokeStyle = pal.inv ? 'rgba(243,244,246,0.95)' : 'rgba(3,4,6,0.92)';
-          ctx.strokeText(t.text, t.x, t.y);
+          ctx.strokeText(t.text, tx, ty);
           let fill = t.color;
           if (t.color === 'rainbow') {
-            const g = ctx.createLinearGradient(t.x - size * 3, 0, t.x + size * 3, 0);
+            const g = ctx.createLinearGradient(tx - size * 3, 0, tx + size * 3, 0);
             const hshift = (time * 240) % 360;
             for (let i = 0; i <= 6; i++) g.addColorStop(i / 6, `hsl(${(hshift + i * 50) % 360},100%,62%)`);
             fill = g;
           } else if (pal.inv) fill = t.color === '#FFFFFF' ? C.ink : C.crimson;
           ctx.fillStyle = fill;
-          ctx.fillText(t.text, t.x, t.y);
+          ctx.fillText(t.text, tx, ty);
           // 加算グロー
           if (!pal.inv) {
             ctx.globalCompositeOperation = 'lighter';
             ctx.globalAlpha = a * 0.35;
-            ctx.fillText(t.text, t.x, t.y);
+            ctx.fillText(t.text, tx, ty);
             ctx.globalCompositeOperation = 'source-over';
           }
         } else {
           ctx.font = `800 ${size}px "Hiragino Sans","Yu Gothic","Noto Sans JP",system-ui,sans-serif`;
           ctx.lineWidth = 3;
           ctx.strokeStyle = pal.inv ? 'rgba(243,244,246,0.9)' : 'rgba(0,0,0,0.85)';
-          ctx.strokeText(t.text, t.x, t.y);
+          ctx.strokeText(t.text, tx, ty);
           ctx.fillStyle = pal.inv ? C.ink : t.color;
-          ctx.fillText(t.text, t.x, t.y);
+          ctx.fillText(t.text, tx, ty);
         }
       }
       ctx.restore();
@@ -1566,11 +1708,8 @@
       const off = s.offset * (s.hold > 0 ? 1 : k);
       if (Math.abs(off) < 0.5) return;
       // ワールド座標 → スクリーン座標（カメラ考慮）
-      const cam = game.camera;
-      const cx = this.w / 2, cy = this.h / 2;
-      const tx = (x) => (x - cx) * cam.zoom + cx + cam.sx;
-      const ty = (y) => (y - cy) * cam.zoom + cy + cam.sy;
-      const ax = tx(s.x1), ay = ty(s.y1), bx = tx(s.x2), by = ty(s.y2);
+      const pa = game.worldToScreen(s.x1, s.y1), pb = game.worldToScreen(s.x2, s.y2);
+      const ax = pa.x, ay = pa.y, bx = pb.x, by = pb.y;
       const ang = Math.atan2(by - ay, bx - ax);
       const dx = Math.cos(ang), dy = Math.sin(ang);
       const nx = -dy, ny = dx;
@@ -1622,6 +1761,71 @@
       ctx.restore();
     }
 
+    /* -------- v3：画面端インジケーター（ボス／巻物／特大魂オーブ） -------- */
+    _drawIndicators(ctx, game, pal) {
+      const w = this.w, h = this.h;
+      const items = [];
+      for (const b of game.bosses) if (!b.dead) items.push({ x: b.x, y: b.y, kind: 'boss', m: P.INDICATOR_MARGIN });
+      if (game.scrolls) for (const sc of game.scrolls) if (!sc.dead) items.push({ x: sc.x, y: sc.y, kind: 'scroll', m: P.INDICATOR_MARGIN });
+      for (const g of game.gems) if (g.isMerged && !g.dead) items.push({ x: g.x, y: g.y, kind: 'orb', tier: g.tier, m: 26 });
+      if (!items.length) return;
+      const cx = w / 2, cy = h / 2;
+      const t = game.realTime;
+      ctx.save();
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      for (const it of items) {
+        const sp = game.worldToScreen(it.x, it.y);
+        if (sp.x >= 0 && sp.x <= w && sp.y >= 0 && sp.y <= h) continue;
+        const m = it.m;
+        const dx = sp.x - cx, dy = sp.y - cy;
+        const kx = dx !== 0 ? (w / 2 - m) / Math.abs(dx) : Infinity;
+        const ky = dy !== 0 ? (h / 2 - m) / Math.abs(dy) : Infinity;
+        const k = Math.min(kx, ky);
+        const ix = cx + dx * k, iy = cy + dy * k;
+        const ang = Math.atan2(dy, dx);
+        const pulse = 1 + Math.sin(t * 8) * 0.12;
+        let col, size, label;
+        if (it.kind === 'boss') { col = C.crimson; size = 16; label = '鬼'; }
+        else if (it.kind === 'scroll') { col = C.gold; size = 13; label = '巻'; }
+        else { col = it.tier >= 3 ? null : it.tier === 2 ? C.gold : C.crimson; size = 7 + it.tier * 2; label = null; }
+        if (pal.inv) col = C.crimson;
+        if (col === null) col = `hsl(${(t * 220) % 360},100%,65%)`;
+        ctx.save();
+        ctx.translate(ix, iy);
+        // 矢印
+        ctx.save();
+        ctx.rotate(ang);
+        ctx.fillStyle = col;
+        ctx.shadowColor = col; ctx.shadowBlur = pal.inv ? 0 : 12;
+        if (it.kind === 'orb') {
+          // 菱形パルス矢印
+          const s2 = size * pulse;
+          ctx.beginPath();
+          ctx.moveTo(s2 * 1.5, 0); ctx.lineTo(0, -s2 * 0.8); ctx.lineTo(-s2 * 0.6, 0); ctx.lineTo(0, s2 * 0.8);
+          ctx.closePath(); ctx.fill();
+          ctx.fillStyle = '#FFFFFF';
+          ctx.beginPath(); ctx.arc(0, 0, s2 * 0.28, 0, TAU); ctx.fill();
+        } else {
+          ctx.beginPath();
+          ctx.moveTo(size * 1.6, 0); ctx.lineTo(size * 0.7, -size * 0.7); ctx.lineTo(size * 0.7, size * 0.7);
+          ctx.closePath(); ctx.fill();
+        }
+        ctx.restore();
+        if (label) {
+          ctx.fillStyle = pal.inv ? C.paper : 'rgba(3,4,6,0.85)';
+          ctx.strokeStyle = col;
+          ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.arc(0, 0, size * pulse, 0, TAU); ctx.fill(); ctx.stroke();
+          ctx.fillStyle = col;
+          ctx.font = `900 ${size * 1.1}px "Hiragino Mincho ProN","Yu Mincho","Noto Serif JP",serif`;
+          ctx.fillText(label, 0, 1);
+        }
+        ctx.restore();
+      }
+      ctx.restore();
+    }
+
     addBeatRing(phase) {
       if (phase < 2) return;
       if (this.beatRings.length >= 4) this.beatRings.shift();
@@ -1658,6 +1862,7 @@
       const w = this.w, h = this.h, dpr = this.dpr;
       const cam = game.camera;
       const cx = w / 2, cy = h / 2;
+      this._game = game;
 
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.globalAlpha = 1;
@@ -1665,38 +1870,49 @@
       ctx.fillStyle = pal.inv ? C.paper : C.bgInkDeep;
       ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
 
-      // カメラ変換（ズーム＋シェイク）
-      const z = cam.zoom;
-      ctx.setTransform(dpr * z, 0, 0, dpr * z, dpr * (cx - cx * z + cam.sx), dpr * (cy - cy * z + cam.sy));
-
-      // Layer 1: 背景ベース＆ステージ固有環境紋様
+      // ===== スクリーン空間：Layer 1 背景（和柄視差・アンビエント・ビート波紋）＋ Layer 2 巨大毛筆 =====
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       this._drawLayer1(ctx, game, pal);
-
-      // Layer 2: 巨大毛筆背景カットイン＋床面デカール＋ボス危険予兆エリア
       this._drawBrush(ctx, pal);
-      for (const d of fx.decals) d.draw(ctx, pal);
+
+      // ===== ワールド空間：translate(画面中心＋シェイク) → scale(zoom) → translate(-カメラ) =====
+      const z = cam.zoom;
+      ctx.setTransform(dpr * z, 0, 0, dpr * z, dpr * (cx + cam.sx - cam.x * z), dpr * (cy + cam.sy - cam.y * z));
+      // 画面外カリング（可視範囲＋CULL_MARGIN）
+      const V = game.view;
+      const M = P.CULL_MARGIN;
+      const vx0 = V.x0 - M, vx1 = V.x1 + M, vy0 = V.y0 - M, vy1 = V.y1 + M;
+      const vis = (o, extra) => {
+        const e = extra || 0;
+        return o.x >= vx0 - e && o.x <= vx1 + e && o.y >= vy0 - e && o.y <= vy1 + e;
+      };
+
+      this._drawGroundDots(ctx, game, pal);
+
+      // Layer 2: 床面デカール＋ボス危険予兆エリア
+      for (const d of fx.decals) if (vis(d, d.size || 0)) d.draw(ctx, pal);
       for (const f of fx.flames) f.draw(ctx, pal, game.time);
       for (const b of game.bosses) b.drawTelegraphs(ctx, pal, game);
       for (const e of game.enemies) if (e.drawTelegraph) e.drawTelegraph(ctx, pal, game);
 
       // Layer 3: 魂ジェム＆設置ギミック＆秘伝の巻物
-      for (const g of game.gimmicks) g.draw(ctx, pal, game);
+      for (const g of game.gimmicks) if (vis(g, 60)) g.draw(ctx, pal, game);
       if (game.scrolls) for (const sc of game.scrolls) sc.draw(ctx, pal, game);
-      for (const g of game.gems) g.draw(ctx, pal, game);
+      for (const g of game.gems) if (vis(g)) g.draw(ctx, pal, game);
 
       // Layer 4: 一刀両断された敵の断面パーツ（＋死体ボウリングの吹っ飛び肉弾）
-      for (const s of fx.halves) s.draw(ctx, pal);
-      for (const c of fx.corpses) c.draw(ctx, pal);
+      for (const sh of fx.halves) if (vis(sh)) sh.draw(ctx, pal);
+      for (const c of fx.corpses) if (vis(c)) c.draw(ctx, pal);
 
       // Layer 5: 生存中の敵・エリート・ボス本体＋部位マーカー
-      for (const e of game.enemies) e.draw(ctx, pal, game);
+      for (const e of game.enemies) if (vis(e, e.r || 0)) e.draw(ctx, pal, game);
       for (const b of game.bosses) b.draw(ctx, pal, game);
       for (const hole of game.blackHoles) hole.draw(ctx, pal, game);
 
-      // Layer 6: 敵弾＆プレイヤーの追尾クナイ・真空波
-      for (const b of game.bullets) b.draw(ctx, pal, game);
-      for (const k of game.kunais) k.draw(ctx, pal, game);
+      // Layer 6: 敵弾＆真空波＆燕返しの残光斬撃
+      for (const b of game.bullets) if (vis(b)) b.draw(ctx, pal, game);
       for (const wv of game.waves) wv.draw(ctx, pal, game);
+      if (game.afterimages) for (const a of game.afterimages) a.draw(ctx, pal, game);
 
       // Layer 7: 次元斬ライン（空間ズレは Layer 12 で合成）＋第弐奥義の漆黒の太陽
       for (const r of fx.rifts) r.draw(ctx, pal);
@@ -1713,12 +1929,14 @@
       ctx.globalCompositeOperation = pal.inv ? 'source-over' : 'lighter';
       for (const t of fx.trails) t.draw(ctx, pal);
       for (const r of fx.rings) r.draw(ctx, pal);
+      for (const f of fx.fans) f.draw(ctx, pal);
       for (const b of fx.bolts) b.draw(ctx, pal);
       for (const b of fx.beams) b.draw(ctx, pal);
       ctx.restore();
-      this._drawParticles(ctx, fx, pal);
+      this._drawParticles(ctx, fx, pal, vis);
 
-      // Layer 11: フローティングテキスト
+      // Layer 11: フローティングテキスト（スクリーン空間・等倍）
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       this._drawTexts(ctx, fx, pal, game.time);
 
       // Layer 12: スクリーンポストエフェクト
@@ -1727,6 +1945,7 @@
       this._applyChromatic(game.dtReal || 0.016);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       this._drawSpeedLines(ctx, game, pal);
+      this._drawIndicators(ctx, game, pal);
       for (const c of fx.cracks) c.draw(ctx, pal.inv);
       if (game.drawUltScreen) game.drawUltScreen(ctx, pal, w, h);
       // ビネット（バレットタイムで強化）
@@ -1754,7 +1973,7 @@
   }
 
   ZI.Effects = {
-    EffectManager, Renderer, InkDecal, SlicedHalf, CorpseShard, VoidRift, SlashTrail, SparkParticle,
+    EffectManager, Renderer, FanWave, InkDecal, SlicedHalf, CorpseShard, VoidRift, SlashTrail, SparkParticle,
     Shockwave, LightningBolt, Beam, FloatingText, ScreenCrack, FlameLine
   };
 })();

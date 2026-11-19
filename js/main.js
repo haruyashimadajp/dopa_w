@@ -75,14 +75,18 @@
       this.bulletFx = 0;
       this.hurtFx = 0;
       this.pal = { inv: false };
-      this.camera = { zoom: 1, base: 1, punch: 0, punchT: 0, shake: 0, sx: 0, sy: 0 };
+      // v3：ワールド座標とスクリーン座標を分離した追従カメラ
+      this.camera = { x: 0, y: 0, zoom: P.BASE_ZOOM, base: P.BASE_ZOOM, punch: 0, punchT: 0, shake: 0, sx: 0, sy: 0, dirX: 0, dirY: -1 };
+      this.view = { cx: 0, cy: 0, hw: 1, hh: 1, r: 1, x0: 0, y0: 0, x1: 0, y1: 0 };
+      this.execCenter = null;
+      this.mergeT = 0;
       this.stageIndex = 0;
       this.stage = CFG.STAGES[0];
 
       this.player = null;
       this.enemies = [];
       this.bullets = [];
-      this.kunais = [];
+      this.afterimages = [];     // v3：燕返し／無想連閃の時間差斬撃
       this.waves = [];
       this.gems = [];
       this.gimmicks = [];
@@ -102,7 +106,7 @@
         mode: 'idle', down: false, pointerId: null,
         downT: 0, downX: 0, downY: 0, lastX: 0, lastY: 0, cx: 0, cy: 0,
         drag: 0, touched: new Set(), path: [], lockList: [], strokeId: 0, ignore: false,
-        flickCd: 0, queuedFlick: null, autoChain: 0, pointerType: 'mouse', hasMouse: false
+        flickCd: 0, queuedFlick: null, pointerType: 'mouse', hasMouse: false, sx: 0, sy: 0
       };
       this.iai = null;
       this.sheatheT = 0;
@@ -177,8 +181,34 @@
     xpMult() { return 1 + 0.15 * this.dojo('xpGain'); }
     dashMult() {
       const g = this.skillLv('godspeed');
-      return this.blade.dashMult * (1 + (g ? CFG.SKILL_TABLE.godspeed.dash[g - 1] : 0));
+      return this.blade.dashMult * (1 + (g ? CFG.SKILL_TABLE.godspeed.dash[g - 1] : 0)) * (this.hasAwakening('shukuchi') ? 1.5 : 1);
     }
+    /** 迅雷チェイン受付時間（縮地で0.35→0.65秒） */
+    chainWindowTime() { return this.hasAwakening('shukuchi') ? 0.65 : P.CHAIN_WINDOW; }
+
+    /* ---------------- v3：座標変換＆可視範囲 ---------------- */
+    worldToScreen(wx, wy) {
+      const c = this.camera, z = c.zoom;
+      return { x: (wx - c.x) * z + this.w * 0.5 + c.sx, y: (wy - c.y) * z + this.h * 0.5 + c.sy };
+    }
+    screenToWorld(sx, sy) {
+      const c = this.camera, z = c.zoom;
+      return { x: (sx - this.w * 0.5 - c.sx) / z + c.x, y: (sy - this.h * 0.5 - c.sy) / z + c.y };
+    }
+    _updateView() {
+      const c = this.camera, v = this.view;
+      v.hw = (this.w * 0.5) / c.zoom; v.hh = (this.h * 0.5) / c.zoom;
+      v.r = Math.hypot(v.hw, v.hh);
+      v.cx = c.x; v.cy = c.y;
+      v.x0 = c.x - v.hw; v.x1 = c.x + v.hw; v.y0 = c.y - v.hh; v.y1 = c.y + v.hh;
+    }
+    inView(x, y, m) {
+      const v = this.view;
+      m = m || 0;
+      return Math.abs(x - v.cx) <= v.hw + m && Math.abs(y - v.cy) <= v.hh + m;
+    }
+    /** スクリーン基準の位置（0〜1）をワールド座標へ */
+    scr(fx, fy) { return this.screenToWorld(this.w * fx, this.h * fy); }
     blastMult() {
       const c = this.skillLv('crimson');
       return 1 + (c ? CFG.SKILL_TABLE.crimson.radius[c - 1] : 0);
@@ -215,18 +245,15 @@
       this.w = this.renderer.w;
       this.h = this.renderer.h;
       this.areaScale = U.clamp((this.w * this.h) / (1280 * 720), 0.55, 1.3);
-      if (this.player) {
-        this.player.x = U.clamp(this.player.x, 16, this.w - 16);
-        this.player.y = U.clamp(this.player.y, 16, this.h - 16);
-      }
+      this._updateView();
     }
 
     _toWorld(ev) {
       const rect = this.canvas.getBoundingClientRect();
       const sx = ev.clientX - rect.left, sy = ev.clientY - rect.top;
-      const cam = this.camera;
-      const cx = this.w / 2, cy = this.h / 2;
-      return { x: (sx - cx - cam.sx) / cam.zoom + cx, y: (sy - cy - cam.sy) / cam.zoom + cy };
+      // スクリーン座標を保持し、毎フレームのカメラ移動に合わせてワールド座標を再計算する
+      this.input.sx = sx; this.input.sy = sy;
+      return this.screenToWorld(sx, sy);
     }
 
     _onKey(e, down) {
@@ -360,7 +387,12 @@
       this.stage = CFG.STAGES[index];
       this.clearWorld();
       const blade = this.blade;
-      this.player = new E.Player(this.w / 2, this.h / 2, blade);
+      // v3：無限マップ。主人公の初期位置はワールド原点
+      this.player = new E.Player(0, 0, blade);
+      this.camera.x = 0; this.camera.y = 0;
+      this.input.sx = this.w / 2; this.input.sy = this.h / 2; this.input.cx = 0; this.input.cy = 0;
+      this.execCenter = null;
+      this.mergeT = 0;
       this.player.maxHp = blade.hp + this.dojo('maxHp');
       this.player.hp = this.player.maxHp;
       this.focus = this.focusMax();
@@ -370,7 +402,7 @@
       this.exec = null;
       this.run = {
         score: 0, kills: 0, bossKills: 0, maxChain: 0, combo: 0, comboTimer: 0, rankIdx: 0, maxRankIdx: 0,
-        totalParries: 0, totalGrazes: 0, maxIaiKills: 0, reachedSS: false, killsSinceKunai: 0, healMark: 0,
+        totalParries: 0, totalGrazes: 0, maxIaiKills: 0, reachedSS: false, healMark: 0,
         level: 1, xp: 0, xpNext: CFG.xpForLevel(1), pendingLevelUps: 0,
         skills: {}, awakenings: new Set(), stageTime: 0,
         timeLeft: this.stage.duration, bossPhase: false, bossSpawned: false,
@@ -390,25 +422,27 @@
       this.iai = null;
       this.pal.inv = false;
       this.paused = false;
-      this.camera.zoom = 1; this.camera.base = 1; this.camera.punch = 0; this.camera.shake = 0;
+      this.camera.base = this._zoomTarget(); this.camera.zoom = this.camera.base; this.camera.punch = 0; this.camera.punchT = 0; this.camera.shake = 0;
+      this.camera.sx = 0; this.camera.sy = 0;
+      this._updateView();
       this.state = STATE.PLAYING;
       this.ui.showHud();
       // 開幕0秒：ファースト・ドパり二重円陣（火薬樽＋提灯2＋笠蜘蛛20）
       E.spawnFormation(this, 'opening');
       this.audio.startBgm(index);
       this.audio.setBgmIntensity(0);
-      this.fx.callout(this.w / 2, this.h * 0.38, `${this.stage.act}『${this.stage.name}』`, '#FFFFFF', Math.min(46, this.w / 16), this.realTime);
+      this.fx.callout(this.w / 2, this.h * 0.38, `${this.stage.act}『${this.stage.name}』`, '#FFFFFF', Math.min(46, this.w / 16), this.realTime, true);
       if (this.w >= 760) {
-        this.fx.text(this.w / 2, this.h * 0.38 + 50, '短く弾く＝迅雷 ／ 長押しでなぞる＝居合 ／ SPACE・右クリック＝奥義', '#C9D2E3', 15, 'info', 3.2);
+        this.fx.text(this.w / 2, this.h * 0.38 + 50, '短く弾く＝迅雷 ／ 長押しでなぞる＝居合 ／ SPACE・右クリック＝奥義', '#C9D2E3', 15, 'info', 3.2, true);
       } else {
-        this.fx.text(this.w / 2, this.h * 0.62, '短く弾く＝迅雷', '#C9D2E3', 15, 'info', 3.2);
-        this.fx.text(this.w / 2, this.h * 0.62 + 22, '長押しでなぞる＝居合', '#C9D2E3', 15, 'info', 3.2);
-        this.fx.text(this.w / 2, this.h * 0.62 + 44, '奥義ボタン＝奥義', '#C9D2E3', 15, 'info', 3.2);
+        this.fx.text(this.w / 2, this.h * 0.62, '短く弾く＝迅雷', '#C9D2E3', 15, 'info', 3.2, true);
+        this.fx.text(this.w / 2, this.h * 0.62 + 22, '長押しでなぞる＝居合', '#C9D2E3', 15, 'info', 3.2, true);
+        this.fx.text(this.w / 2, this.h * 0.62 + 44, '奥義ボタン＝奥義', '#C9D2E3', 15, 'info', 3.2, true);
       }
     }
 
     clearWorld() {
-      this.enemies.length = 0; this.bullets.length = 0; this.kunais.length = 0; this.waves.length = 0;
+      this.enemies.length = 0; this.bullets.length = 0; this.afterimages.length = 0; this.waves.length = 0;
       this.gems.length = 0; this.gimmicks.length = 0; this.bosses.length = 0; this.blackHoles.length = 0;
       this.timers.length = 0; this.pendingSpawns.length = 0;
       this.formations.length = 0; this.scrolls.length = 0;
@@ -586,7 +620,6 @@
       for (const f of this.formations) f.update(st === STATE.BOSS_EXECUTION ? 0 : dtw, this);
       for (const g of this.gimmicks) g.update(dtw);
       for (const sc of this.scrolls) sc.update(dt, this);
-      for (const k of this.kunais) k.update(st === STATE.BOSS_EXECUTION ? 0 : dtp, this);
       for (const w of this.waves) w.update(st === STATE.BOSS_EXECUTION ? 0 : dtp, this);
       for (const g of this.gems) g.update(dt, this);
       for (const h of this.blackHoles) h.update(dtw);
@@ -595,6 +628,10 @@
         this._updateRifts(dtw);
         this._updateAwakenings(dt, dtw);
         this._collisions(dtw);
+        this._maintainWorld();
+        this._updateAfterimages(dt);
+        this.mergeT -= dt;
+        if (this.mergeT <= 0) { this.mergeT = P.GEM_MERGE_INTERVAL; this.mergeOffscreenGems(false); }
         this._updateCorpses();
       } else {
         for (const r of this.fx.rifts) r.update(dtw);
@@ -608,7 +645,6 @@
       const alive = (o) => !o.dead;
       U.compact(this.enemies, alive);
       U.compact(this.bullets, alive);
-      U.compact(this.kunais, alive);
       U.compact(this.waves, alive);
       U.compact(this.gems, alive);
       U.compact(this.gimmicks, alive);
@@ -629,7 +665,7 @@
 
     _ambient(dt) {
       if (Math.random() < dt * 14) {
-        const x = Math.random() * this.w, y = this.h + 10;
+        const x = this.view.x0 + Math.random() * this.view.hw * 2, y = this.view.y1 + 10;
         this.fx.particle(x, y, U.rand(-10, 10), -U.rand(30, 90), U.rand(2, 5), U.rand(1, 2.2), Math.random() < 0.5 ? C.cyan : C.gold, 1, 0.2);
       }
     }
@@ -649,22 +685,66 @@
     /* ------------------------------------------------------------------
      * カメラ（ズーム・パンチズーム・シェイク）
      * ---------------------------------------------------------------- */
+    /** v3 広視界ズーム目標：通常0.70／覚醒0.66／鬼神0.62（照準中+0.03・小画面補正） */
+    _zoomTarget() {
+      const ph = this.run ? this.phase : 1;
+      let z = ph >= 3 ? P.PHASE3_ZOOM : ph >= 2 ? P.PHASE2_ZOOM : P.BASE_ZOOM;
+      if (Math.min(this.w, this.h) < 500) z = Math.min(P.MOBILE_ZOOM_MAX, z * P.MOBILE_ZOOM_MULT);
+      const m = this.input.mode;
+      if ((m === 'aim' || m === 'iaiDash' || m === 'sheathe') && this.state === STATE.PLAYING) z += P.AIM_ZOOM_ADD;
+      return z;
+    }
+
     _updateCamera(dt) {
       const cam = this.camera;
       const m = this.input.mode;
-      const target = (m === 'aim' || m === 'iaiDash' || m === 'sheathe') && this.state === STATE.PLAYING ? P.ZOOM_HOLD : 1;
-      cam.base += (target - cam.base) * Math.min(1, dt * 8);
+      // ズーム（フレームレート非依存の指数補間）
+      cam.base += (this._zoomTarget() - cam.base) * (1 - Math.exp(-P.ZOOM_LERP * dt));
       if (cam.punchT > 0) cam.punchT = Math.max(0, cam.punchT - dt);
       const punch = cam.punch * (cam.punchT / P.ZOOM_RETURN);
       cam.zoom = cam.base + punch;
+      // 滑らか追従（酔い防止ダンピング）
+      const pl = this.player;
+      if (pl && this.run) {
+        let tx = pl.x, ty = pl.y, rate = P.CAM_FOLLOW_NORMAL;
+        if (this.ultMode === 'ult200' && this.ult) { tx = this.ult.cx; ty = this.ult.cy; rate = P.CAM_FOLLOW_ULT; }
+        else if (this.ultMode === 'ult100') rate = P.CAM_FOLLOW_ULT;
+        else if (m === 'aim' || m === 'iaiDash' || m === 'sheathe') rate = P.CAM_FOLLOW_IAI;
+        else if (pl.dash || this.run.chainWindow > 0) rate = P.CAM_FOLLOW_DASH;
+        const k = 1 - Math.exp(-rate * dt);
+        const ox = cam.x, oy = cam.y;
+        cam.x += (tx - cam.x) * k;
+        cam.y += (ty - cam.y) * k;
+        // 最大離脱クランプ：可視半径×0.38を超えたら境界まで即座に引き寄せる
+        this._updateView();
+        if (this.ultMode !== 'ult200') {
+          const dx = pl.x - cam.x, dy = pl.y - cam.y, d = Math.hypot(dx, dy), lim = this.view.r * P.CAM_LEASH;
+          if (d > lim) { cam.x += dx / d * (d - lim); cam.y += dy / d * (d - lim); }
+        }
+        // 進行方向（スポーン・ラップアラウンド用）
+        const mx = cam.x - ox, my = cam.y - oy, ml = Math.hypot(mx, my);
+        cam.moving = ml / Math.max(dt, 1e-4) > 40;
+        if (ml > 0.5) {
+          const kk = Math.min(1, dt * 4);
+          cam.dirX += (mx / ml - cam.dirX) * kk; cam.dirY += (my / ml - cam.dirY) * kk;
+          const dl = Math.hypot(cam.dirX, cam.dirY) || 1; cam.dirX /= dl; cam.dirY /= dl;
+        }
+      }
       cam.shake *= Math.pow(0.05, dt);
       if (cam.shake < 0.05) cam.shake = 0;
       cam.sx = (Math.random() * 2 - 1) * cam.shake;
       cam.sy = (Math.random() * 2 - 1) * cam.shake;
+      this._updateView();
+      if (this.input) {
+        const w = this.screenToWorld(this.input.sx, this.input.sy);
+        this.input.cx = w.x; this.input.cy = w.y;
+      }
     }
     shake(a) { this.camera.shake = Math.min(P.SHAKE_MAX, this.camera.shake + a); }
+    /** ヒットパンチ：+0.05〜+0.09 を瞬間加算し0.25秒で復帰 */
     punchZoom(z) {
-      this.camera.punch = Math.max(z - 1, this.camera.punch * (this.camera.punchT / P.ZOOM_RETURN));
+      const amt = U.clamp(0.05 + (z - P.ZOOM_PUNCH_MIN) / (P.ZOOM_PUNCH_MAX - P.ZOOM_PUNCH_MIN) * 0.04, 0.05, 0.09);
+      this.camera.punch = Math.max(amt, this.camera.punch * (this.camera.punchT / P.ZOOM_RETURN));
       this.camera.punchT = P.ZOOM_RETURN;
     }
     doHitstop(ms) { this.hitstop = Math.max(this.hitstop, ms); }
@@ -773,9 +853,8 @@
       } else {
         ex = pl.x + dir.x * dist; ey = pl.y + dir.y * dist;
       }
-      ex = U.clamp(ex, 16, this.w - 16); ey = U.clamp(ey, 16, this.h - 16);
       const x0 = pl.x, y0 = pl.y;
-      const dur = P.PINBALL_DASH_TIME / ((1 + bonus) * p2);
+      const dur = P.PINBALL_DASH_TIME / ((1 + bonus) * p2) / (this.hasAwakening('shukuchi') ? 1.3 : 1);
       pl.startDash(ex, ey, dur, 'pinball');
       pl.invuln = Math.max(pl.invuln, P.PINBALL_INVULN);
       inp.flickCd = P.FLICK_COOLDOWN;
@@ -787,6 +866,8 @@
         this.fx.trail(x0 + 12, y0 - 12, ex + 12, ey - 10, { width: width * 0.35, color: C.crimson, slash: true });
       }
       const hits = this._resolveSlashLine(x0, y0, ex, ey, width, 'pinball', P.PINBALL_DAMAGE);
+      // 燕返し：同じ軌道を時間差でもう一度斬り抜ける
+      this.scheduleTsubame([{ x: x0, y: y0 }, { x: ex, y: ey }], width, P.PINBALL_DAMAGE * this.atk() * this.blade.hits);
       this.audio.playPinballSlash(streak);
       if (hits > 0) {
         // 命中リファンド +10（撃破ごとに +4 追加）
@@ -800,11 +881,9 @@
           this.fx.sparks(pl.x, pl.y, 6 + this.charge * 3, C.gold, 300, 0.3);
           if (this.charge >= P.CHARGE_MAX && before < P.CHARGE_MAX) this.fx.text(pl.x, pl.y - 46, '迅雷帯電 MAX!!', C.gold, 18, 'info', 0.9);
         }
-        this.run.chainWindow = P.CHAIN_WINDOW;
+        this.run.chainWindow = this.chainWindowTime();
         this.doHitstop(P.HITSTOP_PINBALL);
         this.shake(4 + Math.min(8, hits));
-        // 縮地：自動ホーミング連鎖
-        if (this.hasAwakening('shukuchi') && !isAuto) inp.autoChain = 2;
       } else {
         this.run.pinballStreak = 0;
         // 空振り：還元ゼロ。ゲージ0（または10未満）で息切れ
@@ -855,21 +934,107 @@
         this.fx.sparksDir(c.x, c.y, 6, C.crimson, a, 0.7, 420, 0.3);
         if (this.realTime - (this.run.lastBowl || 0) > 0.9 && c.gen >= 1) {
           this.run.lastBowl = this.realTime;
-          this.fx.callout(U.clamp(c.x, 120, this.w - 120), U.clamp(c.y - 30, 60, this.h - 60), '死体ボウリング!!', C.crimson, 28, this.realTime);
+          this.fx.callout(c.x, c.y - 30, '死体ボウリング!!', C.crimson, 28, this.realTime);
         }
       }
     }
 
     /** 魂ジェムの竜巻一斉バキューム */
-    tornadoVacuum(kills) {
+    tornadoVacuum(kills, boss) {
       const pl = this.player;
       const dir = Math.random() < 0.5 ? 1 : -1;
+      // v3：通常は画面内のジェムのみ。10体以上の大起爆／ボス撃破時は viewRadius×1.6 以内（画面外の特大魂オーブ含む）
+      const wide = boss || kills >= P.WIDE_VACUUM_KILLS;
+      const cx = this.camera.x, cy = this.camera.y;
+      const R = this.view.r * 1.6, R2 = R * R;
       let n = 0;
-      for (const g of this.gems) { if (!g.tornado) { g.startTornado(pl.x, pl.y, dir); n++; } }
+      for (const g of this.gems) {
+        if (g.tornado || g.dead) continue;
+        if (this.inView(g.x, g.y, 0) || (wide && U.dist2(cx, cy, g.x, g.y) <= R2)) { g.startTornado(pl.x, pl.y, dir); n++; }
+      }
       if (!n) return;
       this.audio.playTornado(n);
       this.fx.ring(pl.x, pl.y, 260, 20, 0.6, C.jade, 4);
-      this.fx.text(pl.x, pl.y + 40, `魂竜巻バキューム ×${n}`, C.jade, 18, 'info', 1.0);
+      this.fx.text(pl.x, pl.y + 40, wide ? `魂大竜巻バキューム ×${n}` : `魂竜巻バキューム ×${n}`, C.jade, wide ? 22 : 18, 'info', 1.0);
+    }
+
+    /**
+     * v3：画面外ジェムの統合（ヴァンサバ方式）。経験値は100%ロスなく合算する。
+     * force=true：プール上限接近時に閾値を無視して即時統合
+     */
+    mergeOffscreenGems(force) {
+      const V = this.view;
+      if (!V) return;
+      const mx = V.hw + 40, my = V.hh + 40;
+      const off = [], orbs = [];
+      for (const g of this.gems) {
+        if (g.dead || g.tornado || g.magnet) continue;
+        if (Math.abs(g.x - V.cx) <= mx && Math.abs(g.y - V.cy) <= my) continue;
+        (g.isMerged ? orbs : off).push(g);
+      }
+      let changed = false;
+      // 統合オーブが増えすぎたら古いもの同士を1つへ再統合（最新の1個は残す）
+      if (orbs.length >= P.GEM_MERGE_MAX_ORBS) {
+        orbs.sort((a, b) => b.age - a.age);
+        const host = orbs[0];
+        let sx = host.x * host.value, sy = host.y * host.value, sv = host.value;
+        for (let i = 1; i < orbs.length - 1; i++) {
+          const o = orbs[i];
+          sx += o.x * o.value; sy += o.y * o.value; sv += o.value;
+          host.value += o.value;
+          o.value = 0; o.dead = true;
+        }
+        const p = this._clampMergePos(sx / sv, sy / sv);
+        host.x = p.x; host.y = p.y;
+        orbs.length = 0;
+        for (const g of this.gems) if (g.isMerged && !g.dead && !g.tornado && !g.magnet && !this.inView(g.x, g.y, 40)) orbs.push(g);
+        changed = true;
+      }
+      const limit = force ? 0 : P.OFFSCREEN_GEM_MERGE_THRESHOLD;
+      if (off.length > limit && off.length >= 2) {
+        const n = Math.min(off.length, Math.max(P.GEM_MERGE_MIN, off.length - limit));
+        const cx = this.camera.x, cy = this.camera.y;
+        off.sort((a, b) => U.dist2(cx, cy, b.x, b.y) - U.dist2(cx, cy, a.x, a.y));
+        let sx = 0, sy = 0, sv = 0;
+        for (let i = 0; i < n; i++) {
+          const g = off[i];
+          sx += g.x; sy += g.y; sv += g.value;
+          g.value = 0; g.dead = true;
+        }
+        const p = this._clampMergePos(sx / n, sy / n, off[0].x, off[0].y);
+        // 近くに既存の特大魂オーブがあればそちらを受け皿に
+        let host = null, bd = 320 * 320;
+        for (const o of orbs) { const d2 = U.dist2(o.x, o.y, p.x, p.y); if (d2 < bd) { bd = d2; host = o; } }
+        if (host) host.value += sv;
+        else {
+          const orb = new E.SoulGem(p.x, p.y, sv, 0, 0);
+          orb.isMerged = true;
+          this.gems.push(orb);
+        }
+        changed = true;
+      }
+      if (changed && force) U.compact(this.gems, (g) => !g.dead);
+    }
+
+    /** 統合先座標：カメラから遠すぎる場合は viewRadius×1.45 の位置へ引き寄せる */
+    _clampMergePos(x, y, fx, fy) {
+      const cx = this.camera.x, cy = this.camera.y;
+      const V = this.view;
+      const max = V.r * 1.45;
+      let dx = x - cx, dy = y - cy;
+      let d = Math.hypot(dx, dy);
+      if (d > max) return { x: cx + dx / d * max, y: cy + dy / d * max };
+      // 重心が画面内に落ちた場合（四方に散ったジェム）は、最遠ジェムの方角の画面外へ押し出す
+      if (this.inView(x, y, 40)) {
+        if (d < 1 && fx != null) { dx = fx - cx; dy = fy - cy; d = Math.hypot(dx, dy) || 1; }
+        if (d < 1) { dx = 1; dy = 0; d = 1; }
+        const ux = dx / d, uy = dy / d;
+        const kx = Math.abs(ux) > 1e-3 ? (V.hw + 80) / Math.abs(ux) : Infinity;
+        const ky = Math.abs(uy) > 1e-3 ? (V.hh + 80) / Math.abs(uy) : Infinity;
+        const k = Math.min(kx, ky, max);
+        return { x: cx + ux * k, y: cy + uy * k };
+      }
+      return { x, y };
     }
 
     /** 鬼神トランス：強烈なRGB色収差（±9px）＋画面端から中心への放射状ショックウェーブ */
@@ -877,9 +1042,9 @@
       if (!force && this.realTime - this.run.lastCA < 0.15) return;
       this.run.lastCA = this.realTime;
       this.renderer.chromatic(P.CA_PHASE3_PX);
-      const R = Math.hypot(this.w, this.h) / 2;
-      this.fx.ring(this.w / 2, this.h / 2, R, 40, 0.38, C.gold, 7);
-      this.fx.ring(this.w / 2, this.h / 2, R * 0.9, 30, 0.45, C.crimson, 4);
+      const R = this.view.r;
+      this.fx.ring(this.camera.x, this.camera.y, R, 40, 0.38, C.gold, 7);
+      this.fx.ring(this.camera.x, this.camera.y, R * 0.9, 30, 0.45, C.crimson, 4);
     }
 
     /** BGMのバスドラムと同期（audio.js から呼ばれる） */
@@ -890,15 +1055,15 @@
 
     /** 巨大毛筆カットインの表示開始時（金箔飛沫＋太鼓／鬼神は衝撃波） */
     onBrushStart(b) {
-      const cx = this.w / 2, cy = this.h / 2;
+      const cx = this.camera.x, cy = this.camera.y;
       for (let i = 0; i < 46; i++) {
         const a = Math.random() * TAU, sp = U.rand(120, 520);
-        this.fx.particle(cx + U.rand(-this.w * 0.3, this.w * 0.3), cy + U.rand(-60, 60), Math.cos(a) * sp, Math.sin(a) * sp, U.rand(0.5, 1.2), U.rand(2, 4.5), C.gold, 1, 2.5);
+        this.fx.particle(cx + U.rand(-this.view.hw * 0.6, this.view.hw * 0.6), cy + U.rand(-60, 60), Math.cos(a) * sp, Math.sin(a) * sp, U.rand(0.5, 1.2), U.rand(2, 4.5), C.gold, 1, 2.5);
       }
       this.audio.playBrushCutin(b.phase);
       if (b.phase >= 3) {
-        this.fx.ring(cx, cy, 30, Math.max(this.w, this.h) * 0.7, 0.7, C.crimson, 9);
-        this.fx.ring(cx, cy, 20, Math.max(this.w, this.h) * 0.55, 0.6, C.gold, 6);
+        this.fx.ring(cx, cy, 30, this.view.r * 1.1, 0.7, C.crimson, 9);
+        this.fx.ring(cx, cy, 20, this.view.r * 0.85, 0.6, C.gold, 6);
         this.renderer.doFlash(0.3, C.gold);
         this.shake(14);
         if (this.run) this.trancePunch(true);
@@ -1057,7 +1222,7 @@
       for (const b of this.bullets) {
         if (b.dead) continue;
         const rr = b.r + half;
-        if (U.segDist2(b.x, b.y, x0, y0, x1, y1) <= rr * rr) { this.parryBullet(b); hitCount++; }
+        if (U.segDist2(b.x, b.y, x0, y0, x1, y1) <= rr * rr) { this.parryBullet(b, ang); hitCount++; }
       }
       // Phase2：着弾点に半径75pxの衝撃波リング
       if (this.phase >= 2 && src === 'pinball') {
@@ -1074,6 +1239,109 @@
       return hitCount;
     }
 
+    // ------------------------------------------------------------
+    //  v3：燕返し・二重一閃 ／ 【極意】燕返し・無想連閃
+    // ------------------------------------------------------------
+    /** 手動斬撃の軌跡 pts（ワールド座標の折れ線）から時間差残光斬撃を予約する */
+    scheduleTsubame(pts, width, baseDmg) {
+      const lv = this.skillLv('tsubame');
+      if (!lv || !pts || pts.length < 2) return;
+      const sk = CFG.SKILLS.find((k) => k.id === 'tsubame');
+      const i = Math.min(lv, 5) - 1;
+      const half = (width / 2) * (1 + sk.width[i]);
+      if (this.hasAwakening('musou')) {
+        // 三連・無想交差斬：元の軌道＋中点で左右に斜め交差する2本を 0.16s／0.30s に
+        const a = pts[0], b = pts[pts.length - 1];
+        let mx, my;
+        {
+          const tmp = new E.AfterimageSlash(pts, { delay: 0, dmg: 0, half: 1 });
+          const m = tmp.pointAt(tmp.len / 2); mx = m.x; my = m.y;
+        }
+        const dir = Math.atan2(b.y - a.y, b.x - a.x);
+        const L = Math.max(180, Math.hypot(b.x - a.x, b.y - a.y)) / 2;
+        const off = 35 * Math.PI / 180;
+        const diag = (s) => {
+          const d = dir + s * off;
+          return [{ x: mx - Math.cos(d) * L, y: my - Math.sin(d) * L }, { x: mx + Math.cos(d) * L, y: my + Math.sin(d) * L }];
+        };
+        const lines = [pts, diag(1), diag(-1)];
+        for (const delay of [0.16, 0.30]) {
+          for (const ln of lines) {
+            this.afterimages.push(new E.AfterimageSlash(ln.map((p) => ({ x: p.x, y: p.y })), {
+              delay, sweep: 0.09, dmg: baseDmg * 1.1, half, src: 'musou', color: '#DDFBFF', edge: C.gold
+            }));
+          }
+        }
+        return;
+      }
+      this.afterimages.push(new E.AfterimageSlash(pts.map((p) => ({ x: p.x, y: p.y })), {
+        delay: sk.delay, sweep: 0.1, dmg: baseDmg * sk.dmg[i], half, src: 'tsubame', color: '#BFF6FF', edge: C.gold
+      }));
+    }
+
+    _updateAfterimages(dt) {
+      const list = this.afterimages;
+      if (!list.length) return;
+      let sfx = false;
+      for (const a of list) {
+        const wasActive = a.active;
+        const seg = a.update(dt);
+        if (!wasActive && a.active && !sfx) {
+          sfx = true;
+          this.audio.playPinballSlash(a.src === 'musou' ? 3 : 1);
+        }
+        if (!seg) continue;
+        for (let i = 1; i < seg.length; i++) this._afterimageHit(a, seg[i - 1].x, seg[i - 1].y, seg[i].x, seg[i].y);
+      }
+      U.compact(list, (a) => !a.dead);
+    }
+
+    /** 残光斬撃の一区間の当たり判定（各対象1回まで） */
+    _afterimageHit(a, x0, y0, x1, y1) {
+      const half = a.half;
+      const seen = a.seen;
+      const ang = Math.atan2(y1 - y0, x1 - x0);
+      if (Math.hypot(x1 - x0, y1 - y0) > 2) {
+        this.fx.trail(x0, y0, x1, y1, { width: half * 1.1, color: a.edge, slash: true });
+        this.fx.trail(x0, y0, x1, y1, { width: half * 0.6, color: a.color, core: '#FFFFFF', slash: true });
+      }
+      const opts = { src: a.src, angle: ang, combo: 1 };
+      for (const e of this.enemies) {
+        if (e.dead || e.pending || seen.has(e)) continue;
+        const rr = e.r + half;
+        if (U.segDist2(e.x, e.y, x0, y0, x1, y1) <= rr * rr) {
+          seen.add(e);
+          this.dealDamage(e, a.dmg, opts);
+          this.fx.sparksDir(e.x, e.y, 6, a.color, ang, 0.6, 480, 0.25);
+        }
+      }
+      for (const b of this.bosses) {
+        if (!b.lockable) continue;
+        for (const c of b.cores) {
+          if (c.broken || seen.has(c)) continue;
+          const rr = c.r + half;
+          if (U.segDist2(c.x, c.y, x0, y0, x1, y1) <= rr * rr) { seen.add(c); this.dealDamage(c, a.dmg, opts); }
+        }
+        if (seen.has(b) || b.dead) continue;
+        const part = this._bossSegHit(b, x0, y0, x1, y1, half);
+        if (part) {
+          seen.add(b);
+          this.dealDamage(b, a.dmg, Object.assign({ at: part }, opts));
+          this.fx.sparksDir(part.x, part.y, 8, C.gold, ang, 0.7, 520, 0.3);
+        }
+      }
+      for (const g of this.gimmicks) {
+        if (!g.lockable || seen.has(g)) continue;
+        const rr = g.r + half;
+        if (U.segDist2(g.x, g.y, x0, y0, x1, y1) <= rr * rr) { seen.add(g); this.triggerGimmick(g); }
+      }
+      for (const b of this.bullets) {
+        if (b.dead || seen.has(b)) continue;
+        const rr = b.r + half;
+        if (U.segDist2(b.x, b.y, x0, y0, x1, y1) <= rr * rr) { seen.add(b); this.parryBullet(b, ang); }
+      }
+    }
+
     _onHitSkills(list, hitDmg, ang) {
       const lv = this.skillLv('lightning');
       const sh = this.skillLv('shadow');
@@ -1086,12 +1354,14 @@
         }
         if (sh) {
           const T = CFG.SKILL_TABLE.shadow;
-          const clones = this.hasAwakening('senju') ? 5 : T.clones[sh - 1];
+          // 千手観音：自分が斬撃を当てるたびに5体の影分身が四方から「同時に」交差追撃
+          const senju = this.hasAwakening('senju');
+          const clones = senju ? 5 : T.clones[sh - 1];
           const pct = T.dmg[sh - 1];
           for (let i = 0; i < clones; i++) {
-            this.later(0.09 + i * 0.07, () => {
+            this.later(senju ? 0.06 : 0.09 + i * 0.07, () => {
               if (t.dead || (t.isBoss && !t.lockable)) return;
-              const a = ang + U.rand(-1.2, 1.2) + (i % 2 ? Math.PI : 0);
+              const a = senju ? ang + (i / clones) * Math.PI : ang + U.rand(-1.2, 1.2) + (i % 2 ? Math.PI : 0);
               const L = (t.r || 16) + 26;
               this.fx.trail(t.x - Math.cos(a) * L, t.y - Math.sin(a) * L, t.x + Math.cos(a) * L, t.y + Math.sin(a) * L, { width: 7, color: '#6C7BA0', core: '#C9D2E3', life: 0.2 });
               this.dealDamage(t, hitDmg * pct, { src: 'shadow', angle: a, combo: 1 });
@@ -1128,12 +1398,6 @@
         inp.queuedFlick = null;
         this.doPinball(q.angle, q.forcedTarget);
         return;
-      }
-      if (inp.autoChain > 0) {
-        inp.autoChain--;
-        const t = this.nearestTarget(this.player.x, this.player.y, P.PINBALL_HOMING_RANGE * this.dashMult());
-        if (t) this.doPinball(Math.atan2(t.y - this.player.y, t.x - this.player.x), t, true);
-        else inp.autoChain = 0;
       }
     }
 
@@ -1193,7 +1457,7 @@
       // 森羅万象：半径300px内を自動一斉ロック
       if (this.hasAwakening('shinra')) {
         const pl = this.player;
-        const list = this.enemies.filter((e) => e.lockable && !e.pending && U.dist2(pl.x, pl.y, e.x, e.y) < 300 * 300)
+        const list = this.enemies.filter((e) => e.lockable && !e.pending && this.inView(e.x, e.y, 0) && U.dist2(pl.x, pl.y, e.x, e.y) < 300 * 300)
           .sort((a, b) => U.dist2(pl.x, pl.y, a.x, a.y) - U.dist2(pl.x, pl.y, b.x, b.y));
         for (const e of list) this._tryLock(e, true);
         this.fx.ring(pl.x, pl.y, 20, 300, 0.5, C.cyan, 3);
@@ -1297,7 +1561,8 @@
       this.iai = {
         targets: list, idx: 0, per,
         startX: this.player.x, startY: this.player.y,
-        path: inp.path.slice(), lastAng: 0
+        path: inp.path.slice(), lastAng: 0,
+        slashPts: [{ x: this.player.x, y: this.player.y }]
       };
       this.player.invuln = Math.max(this.player.invuln, 0.5);
       this._iaiNext();
@@ -1329,13 +1594,14 @@
       while (iai.idx < n && iai.t >= (iai.idx + 1) * iai.per) {
         const t = iai.targets[iai.idx];
         const a = Math.atan2(t.y - iai.fromY, t.x - iai.fromX);
-        const ex = U.clamp(t.x + Math.cos(a) * 10, 16, this.w - 16);
-        const ey = U.clamp(t.y + Math.sin(a) * 10, 16, this.h - 16);
+        const ex = t.x + Math.cos(a) * 10;
+        const ey = t.y + Math.sin(a) * 10;
         this.fx.trail(iai.fromX, iai.fromY, ex, ey, { width: 9 * this.blade.widthMult, color: this.activeCharge ? C.gold : this.blade.color, core: this.blade.core, slash: true, curve: 0 });
         this.audio.playIaiStep(iai.idx, n);
         if (iai.idx % 2 === 0 || n < 30) this.fx.sparks(t.x, t.y, 3, '#FFFFFF', 260, 0.2);
         iai.lastAng = a;
         iai.fromX = ex; iai.fromY = ey;
+        if (iai.slashPts) iai.slashPts.push({ x: ex, y: ey });
         iai.idx++;
       }
       if (iai.idx >= n) {
@@ -1410,7 +1676,7 @@
         if (t.dead) continue;
         if (t.isCore && breaks.includes(t.boss)) continue;
         const ang = Math.atan2(t.y - iai.startY, t.x - iai.startX) + U.rand(-0.6, 0.6);
-        if (t.isBullet) { this.parryBullet(t); continue; }
+        if (t.isBullet) { this.parryBullet(t, ang); continue; }
         if (t.isGimmick) { this.triggerGimmick(t); continue; }
         this.dealDamage(t, dmg, { src: 'iai', angle: ang, combo: this.blade.hits, quiet: n > 30 });
       }
@@ -1426,6 +1692,10 @@
       }
       for (const b of breaks) this.allBreak(b, n);
       for (const b of counters) this.saintCounter(b);
+      // 燕返し：居合の斬り抜け軌跡（始点→各標的→終点）を時間差で再斬撃
+      if (iai.slashPts && iai.slashPts.length >= 2) {
+        this.scheduleTsubame(iai.slashPts, P.PINBALL_CAPSULE_WIDTH * this.blade.widthMult, P.IAI_DAMAGE * atk * this.blade.hits * (phase >= 2 ? P.PHASE2_BLAST_MULT : 1));
+      }
       // 雷鳴抜刀・影打
       const enemiesHit = unique.filter((t) => t.isEnemy || t.isBoss || t.isCore);
       this._onHitSkills(enemiesHit, dmg, iai.lastAng);
@@ -1459,7 +1729,7 @@
         this.renderer.doFlash(phase === 3 ? 0.45 : 0.22, '#FFFFFF');
         this.audio.playDetonation(n, false);
         this.fx.ring(pl.x, pl.y, 10, 180 + n * 4, 0.45, this.blade.color, 5);
-        if (phase === 3) this.fx.ring(this.w / 2, this.h / 2, 30, Math.max(this.w, this.h) * 0.6, 0.6, C.crimson, 6);
+        if (phase === 3) this.fx.ring(this.camera.x, this.camera.y, 30, this.view.r, 0.6, C.crimson, 6);
       } else {
         this.audio.playExplosionSmall();
         this.shake(4);
@@ -1500,7 +1770,7 @@
     _killCallout(kills, x, y) {
       for (const c of CFG.CALLOUTS) {
         if (kills >= c.min) {
-          this.fx.callout(U.clamp(x, 160, this.w - 160), U.clamp(y, 80, this.h - 80), c.text, c.color, Math.min(c.size, this.w / 9), this.realTime);
+          this.fx.callout(x, y, c.text, c.color, Math.min(c.size, this.w / 9), this.realTime);
           return;
         }
       }
@@ -1603,22 +1873,15 @@
         const r = 55 * this.blastMult();
         this.later(kagu ? 0.07 : 0.05, () => this.blast(e.x, e.y, r, 0.8 * this.atk(), { src: kagu ? 'chain' : 'chainEnd', color: C.crimson, small: true }));
       }
-      // 弾返しの達人：10体ごとに追尾クナイ自動発射
-      const pl = this.skillLv('parry');
-      if (pl) {
-        run.killsSinceKunai++;
-        if (run.killsSinceKunai >= CFG.SKILL_TABLE.parry.autoEvery) {
-          run.killsSinceKunai = 0;
-          const n = CFG.SKILL_TABLE.parry.kunai[pl - 1];
-          for (let i = 0; i < n; i++) this.kunais.push(new E.HomingKunai(this.player.x, this.player.y, (i / n) * TAU, P.KUNAI_DAMAGE * this.atk()));
-          this.audio.playKunai();
-        }
-      }
+      // 無想連閃：交差斬での撃破ごとに集中+4
+      if (opts.src === 'musou') this.focus = Math.min(this.focusMax(), this.focus + 4);
     }
 
     dropGems(x, y, value, pieces) {
       pieces = Math.max(1, Math.min(6, pieces || 1));
       const each = value / pieces;
+      // v3：上限接近時は画面内ジェムを消さず、画面外統合を即時実行
+      if (this.gems.length + pieces >= P.GEM_MAX - 10) this.mergeOffscreenGems(true);
       for (let i = 0; i < pieces; i++) {
         if (this.gems.length >= P.GEM_MAX) {
           const g = this.gems[(Math.random() * this.gems.length) | 0];
@@ -1633,10 +1896,20 @@
     collectGem(g) {
       const run = this.run;
       if (!run) return;
-      run.xp += g.value * this.xpMult();
-      if (this.realTime - run.lastGemT < 0.35) run.gemStreak++; else run.gemStreak = 0;
-      run.lastGemT = this.realTime;
-      this.audio.playGemPickup(run.gemStreak);
+      // XPにランク倍率（rank.mult）は掛けない（スコアのみ）
+      const xp = g.value * this.xpMult();
+      run.xp += xp;
+      if (g.isMerged) {
+        // 特大魂オーブ：リッチな和音チャイム＋金色の +XX XP!
+        this.audio.playOrbPickup(g.tier);
+        const pl = this.player;
+        this.fx.text(pl.x, pl.y - 52, `+${Math.round(xp)} XP!`, C.gold, g.tier >= 3 ? 26 : g.tier === 2 ? 22 : 18, 'info', 1.0);
+        this.fx.sparks(pl.x, pl.y, 10 + g.tier * 6, g.tier >= 3 ? C.cyan : C.gold, 360, 0.4);
+      } else {
+        if (this.realTime - run.lastGemT < 0.35) run.gemStreak++; else run.gemStreak = 0;
+        run.lastGemT = this.realTime;
+        this.audio.playGemPickup(run.gemStreak);
+      }
       while (run.xp >= run.xpNext) {
         run.xp -= run.xpNext;
         run.level++;
@@ -1682,26 +1955,40 @@
       else if (opts.small) this.audio.playExplosionSmall();
     }
 
-    parryBullet(b) {
+    /** v3 弾斬り：クナイを廃止し「斬り返し衝撃波（手動カウンター）」へ */
+    parryBullet(b, ang) {
       if (b.dead) return;
       b.dead = true;
       b.pending = false;
       const run = this.run;
       run.totalParries++;
       this.addCombo(P.PARRY_COMBO);
-      let ug = P.ULT_PARRY;
+      let ug = P.PARRY_ULT;
       if (run.rankIdx >= 3) ug *= P.ULT_RANK_S_MULT;
       this.addUlt(ug);
-      run.score += Math.round(50 * this.rank.mult);
-      const lv = this.skillLv('parry');
-      const n = lv ? CFG.SKILL_TABLE.parry.kunai[lv - 1] : 1;
-      const base = Math.atan2(b.vy, b.vx) + Math.PI;
-      for (let i = 0; i < n; i++) {
-        if (this.kunais.length > 160) break;
-        this.kunais.push(new E.HomingKunai(b.x, b.y, base + (i - (n - 1) / 2) * 0.35, P.KUNAI_DAMAGE * this.atk()));
+      run.score += Math.round(P.PARRY_SCORE * this.rank.mult);
+      this.focus = Math.min(this.focusMax(), this.focus + P.PARRY_FOCUS);
+      // 斬撃進行方向（不明なら弾の逆方向）へ扇状の衝撃波
+      const dir = ang != null ? ang : Math.atan2(b.vy, b.vx) + Math.PI;
+      const tl = this.skillLv('tsubame');
+      const boost = 1 + (tl ? CFG.SKILL_TABLE.tsubame.parryR[tl - 1] : 0);
+      const R = P.PARRY_WAVE_RADIUS * boost;
+      const dmg = P.PARRY_WAVE_DAMAGE * this.atk() * (tl ? 1 + CFG.SKILL_TABLE.tsubame.dmg[tl - 1] * 0.5 : 1);
+      const half = P.PARRY_WAVE_ARC * Math.PI / 180;
+      for (const e of this.enemies) {
+        if (e.dead || e.pending) continue;
+        const dx = e.x - b.x, dy = e.y - b.y, d = Math.hypot(dx, dy);
+        if (d > R + e.r) continue;
+        if (d > e.r && Math.abs(U.angleDiff(dir, Math.atan2(dy, dx))) > half) continue;
+        e.knockX += Math.cos(dir) * 420; e.knockY += Math.sin(dir) * 420;
+        this.dealDamage(e, dmg, { src: 'parry', angle: dir, combo: 1, quiet: true });
       }
-      this.fx.sparks(b.x, b.y, 8, C.cyan, 360, 0.3);
-      this.fx.ring(b.x, b.y, 4, 26, 0.2, C.cyan, 2);
+      for (const bo of this.bosses) {
+        if (bo.lockable && this._bossDist2(bo, b.x, b.y) <= R * R) this.dealDamage(bo, dmg, { src: 'parry', combo: 1, quiet: true });
+      }
+      this.fx.fan(b.x, b.y, dir, half, R, 0.3, C.cyan);
+      this.fx.sparksDir(b.x, b.y, 14, C.cyan, dir, half, 520, 0.35);
+      this.fx.sparks(b.x, b.y, 6, '#FFFFFF', 300, 0.25);
       this.audio.playParry();
       if (this.realTime - (run.lastParryText || 0) > 0.35) {
         run.lastParryText = this.realTime;
@@ -1776,11 +2063,11 @@
       const r = CFG.STYLE_RANKS[idx];
       if (up) this._checkCutins(run.combo, run.combo, r.id);
       if (up) {
-        if (this.w >= 760) this.fx.text(this.w - 140, Math.max(200, this.h * 0.28), `RANK ${r.id}  ${r.name}`, r.color, 22, 'info');
-        else this.fx.text(this.w / 2, this.h * 0.3 + 58, `RANK ${r.id}  ${r.name}`, r.color, 20, 'info');
+        if (this.w >= 760) this.fx.text(this.w - 140, Math.max(200, this.h * 0.28), `RANK ${r.id}  ${r.name}`, r.color, 22, 'info', undefined, true);
+        else this.fx.text(this.w / 2, this.h * 0.3 + 58, `RANK ${r.id}  ${r.name}`, r.color, 20, 'info', undefined, true);
         if (r.phase !== prevPhase) {
           const lab = CFG.PHASE_LABELS[r.phase];
-          this.fx.callout(this.w / 2, this.h * 0.3, `${lab.jp}!!`, r.phase === 3 ? C.crimson : C.cyan, Math.min(56, this.w / 10), this.realTime);
+          this.fx.callout(this.w / 2, this.h * 0.3, `${lab.jp}!!`, r.phase === 3 ? C.crimson : C.cyan, Math.min(56, this.w / 10), this.realTime, true);
           this.renderer.doFlash(0.25, r.phase === 3 ? C.crimson : C.cyan);
           this.audio.playAwaken();
         }
@@ -1919,7 +2206,7 @@
         this.audio.playVoidCollapse();
         if (this.realTime - this.run.lastCalloutVoid > 0.7) {
           this.run.lastCalloutVoid = this.realTime;
-          this.fx.callout(U.clamp(mx, 120, this.w - 120), U.clamp(my - 30, 60, this.h - 60), '空間断裂!!', '#FFFFFF', 36, this.realTime);
+          this.fx.callout(mx, my - 30, '空間断裂!!', '#FFFFFF', 36, this.realTime);
         }
         if (!r.noShift) this._split(r.x1, r.y1, r.x2, r.y2, -P.VOID_SHIFT, 0.2);
       }
@@ -1932,49 +2219,6 @@
       const pl = this.player;
       const atk = this.atk();
       const run = this.run;
-      // 千手観音：分身が斬った敵へ八方から乱舞斬り
-      if (this.hasAwakening('senju')) {
-        run.senjuT = (run.senjuT || 0) - dt;
-        if (run.senjuT <= 0) {
-          run.senjuT = 0.11;
-          const cands = this.enemies.filter((e) => !e.dead && !e.pending && this.time - e.lastHitAt < 3);
-          const t = cands.length ? U.choice(cands) : null;
-          if (t) {
-            const a = Math.random() * TAU;
-            const L = t.r + 30;
-            this.fx.trail(t.x - Math.cos(a) * L, t.y - Math.sin(a) * L, t.x + Math.cos(a) * L, t.y + Math.sin(a) * L, { width: 8, color: '#8A9BC4', core: '#E6ECFA', life: 0.18 });
-            this.dealDamage(t, 0.6 * atk, { src: 'shadow', angle: a, combo: 1, quiet: true });
-          } else {
-            for (const b of this.bosses) {
-              if (b.lockable && this.time - (b.lastShadow || -9) > 0.3) {
-                b.lastShadow = this.time;
-                const a = Math.random() * TAU;
-                this.fx.trail(b.x - Math.cos(a) * 60, b.y - Math.sin(a) * 60, b.x + Math.cos(a) * 60, b.y + Math.sin(a) * 60, { width: 8, color: '#8A9BC4', life: 0.18 });
-                this.dealDamage(b, 0.6 * atk, { src: 'shadow', combo: 1, quiet: true });
-              }
-            }
-          }
-        }
-      }
-      // 八咫鏡：回転光刃で自動パリィ＋クナイばら撒き
-      if (this.hasAwakening('yata')) {
-        for (const b of this.bullets) {
-          if (!b.dead && !b.pending && U.dist2(pl.x, pl.y, b.x, b.y) < 80 * 80) this.parryBullet(b);
-        }
-        for (const e of this.enemies) {
-          if (e.dead || e.pending) continue;
-          const d = Math.hypot(e.x - pl.x, e.y - pl.y);
-          if (d < 62 + e.r && d > 40 - e.r && this.time - (e.yataT || -9) > 0.25) {
-            e.yataT = this.time;
-            this.dealDamage(e, 0.5 * atk, { src: 'yata', combo: 1, quiet: true });
-          }
-        }
-        run.yataT = (run.yataT || 0) - dt;
-        if (run.yataT <= 0 && this.kunais.length < 120) {
-          run.yataT = 1 / 6;
-          this.kunais.push(new E.HomingKunai(pl.x, pl.y, Math.random() * TAU, P.KUNAI_DAMAGE * atk));
-        }
-      }
       // 黒縄地獄のブラックホール
       for (const h of this.blackHoles) {
         for (const e of this.enemies) {
@@ -2076,20 +2320,6 @@
           this.damagePlayer();
         }
       }
-      // 追尾クナイ
-      for (const k of this.kunais) {
-        if (k.dead) continue;
-        const t = k.target;
-        if (!t || t.dead) continue;
-        let hit = false;
-        if (t.isBoss) hit = this._bossDist2(t, k.x, k.y) < 64;
-        else hit = U.dist2(t.x, t.y, k.x, k.y) < (t.r + 6) * (t.r + 6);
-        if (hit) {
-          k.dead = true;
-          this.dealDamage(t, k.dmg, { src: 'kunai', angle: k.angle, combo: 1, quiet: this.kunais.length > 40 });
-          this.fx.sparks(k.x, k.y, 3, C.cyan, 200, 0.2);
-        }
-      }
       // 真空三日月波（貫通）
       for (const w of this.waves) {
         if (w.dead) continue;
@@ -2159,13 +2389,58 @@
       this.bullets.push(new E.EnemyBullet(x, y, vx, vy, opts));
     }
 
+    /** v3 スポーン点：カメラ中心から 可視半径+90〜+220 の全周（移動中は進行方向側に65%の重み） */
     _edgePoint() {
-      const m = 40;
-      const side = (Math.random() * 4) | 0;
-      if (side === 0) return { x: U.rand(-m, this.w + m), y: -m };
-      if (side === 1) return { x: this.w + m, y: U.rand(-m, this.h + m) };
-      if (side === 2) return { x: U.rand(-m, this.w + m), y: this.h + m };
-      return { x: -m, y: U.rand(-m, this.h + m) };
+      const v = this.view, cam = this.camera;
+      let a;
+      if (cam.moving && Math.random() < P.SPAWN_FORWARD_WEIGHT) a = Math.atan2(cam.dirY, cam.dirX) + U.rand(-Math.PI / 2, Math.PI / 2);
+      else a = Math.random() * TAU;
+      const d = v.r + U.rand(P.SPAWN_RING_MIN, P.SPAWN_RING_MAX);
+      return { x: v.cx + Math.cos(a) * d, y: v.cy + Math.sin(a) * d };
+    }
+
+    /** v3 無限マップの維持：雑魚のラップアラウンド再配置・ギミック／陣形の整理・ボス追跡ワープ */
+    _maintainWorld() {
+      const v = this.view, cam = this.camera, pl = this.player;
+      const wrapD2 = (v.r * P.WRAP_DIST) * (v.r * P.WRAP_DIST);
+      const fwd = Math.atan2(cam.dirY, cam.dirX);
+      const half = P.WRAP_ANGLE * Math.PI / 180;
+      for (const e of this.enemies) {
+        if (e.dead || e.pending || e.isClone) continue;
+        if (e.form && !e.form.done) continue;
+        if (U.dist2(e.x, e.y, v.cx, v.cy) < wrapD2) continue;
+        // 削除せず進行方向側（±75°）の画面外へワープ（HP維持・状態異常リセット）
+        const a = fwd + U.rand(-half, half);
+        const d = v.r + P.WRAP_SPAWN;
+        e.x = v.cx + Math.cos(a) * d; e.y = v.cy + Math.sin(a) * d;
+        e.paralyze = 0; e.knockX = 0; e.knockY = 0; e.vx = 0; e.vy = 0;
+        e.lockStroke = -1; e.lockCount = 0; e.inside = false; e.grazeIn = false;
+        if (e.state && e.state !== 'move' && e.state !== 'approach') { e.state = e.type === 'ronin' ? 'approach' : 'move'; e.st = 0; }
+        e.age = Math.min(e.age, 0.05);
+      }
+      // 置き去りの陣形は解散させ、メンバーをラップ対象にする
+      for (const f of this.formations) {
+        if (!f.done && f.t > 1.5 && U.dist2(f.x, f.y, v.cx, v.cy) > (v.r * 2.2) * (v.r * 2.2)) f.finish();
+      }
+      // 遠く離れた設置ギミックは撤去
+      for (const g of this.gimmicks) {
+        if (!g.dead && !g.pending && U.dist2(g.x, g.y, v.cx, v.cy) > (v.r * 2.5) * (v.r * 2.5)) g.dead = true;
+      }
+      // ボス：可視半径×2.2を超えたらプレイヤー前方へ警告演出付きワープ
+      for (const b of this.bosses) {
+        if (b.dead || b.executing || b.entering) continue;
+        const d = Math.hypot(b.x - pl.x, b.y - pl.y);
+        if (d > v.r * P.BOSS_WARP_DIST) {
+          const tx = pl.x + Math.cos(fwd) * v.r * 0.75, ty = pl.y + Math.sin(fwd) * v.r * 0.75;
+          b.cancelChant();
+          if (b.charge) b.charge = null;
+          b.shift(tx - b.x, ty - b.y);
+          b.telegraphs = [];
+          this.fx.ring(b.x, b.y, 160, 20, 0.5, C.crimson, 6);
+          this.fx.callout(b.x, b.y - 60, '強敵急迫!!', C.crimson, 30, this.realTime);
+          this.audio.playWarning();
+        }
+      }
     }
 
     spawnEnemyGroup(type, count, mult) {
@@ -2173,7 +2448,7 @@
       const o = mult || {};
       if (type === 'spider') {
         const c = this._edgePoint();
-        const toward = Math.atan2(this.h / 2 - c.y, this.w / 2 - c.x);
+        const toward = Math.atan2(this.view.cy - c.y, this.view.cx - c.x);
         const form = (Math.random() * 3) | 0;
         for (let i = 0; i < count; i++) {
           let ox, oy;
@@ -2284,13 +2559,8 @@
         run.gimmickT = stage.gimmickEvery * U.rand(0.8, 1.2);
         if (this.gimmicks.length < stage.gimmickMax) {
           const kind = U.choice(stage.gimmicks);
-          for (let tries = 0; tries < 8; tries++) {
-            const x = U.rand(80, this.w - 80), y = U.rand(Math.min(150, this.h * 0.25), this.h - 80);
-            if (U.dist2(x, y, this.player.x, this.player.y) > 140 * 140) {
-              this.gimmicks.push(new E.GIMMICK_CLASSES[kind](x, y));
-              break;
-            }
-          }
+          const c = this._edgePoint();
+          this.gimmicks.push(new E.GIMMICK_CLASSES[kind](c.x, c.y));
         }
       }
     }
@@ -2326,7 +2596,7 @@
         this.bosses.push(boss);
         this.run.bossSpawned = true;
         this.state = STATE.PLAYING;
-        this.fx.callout(this.w / 2, this.h * 0.25, boss.name, C.crimson, Math.min(42, this.w / 14), this.realTime);
+        this.fx.callout(this.w / 2, this.h * 0.25, boss.name, C.crimson, Math.min(42, this.w / 14), this.realTime, true);
       }
     }
 
@@ -2365,8 +2635,8 @@
       this.fx.ring(boss.x, boss.y, 20, 360, 0.7, C.gold, 8);
       this.fx.ring(boss.x, boss.y, 10, 240, 0.5, '#FFFFFF', 4);
       this.fx.sparks(boss.x, boss.y, 60, C.gold, 700, 0.8);
-      this.fx.callout(this.w / 2, this.h * 0.32, 'ALL BREAK!!', C.gold, Math.min(76, this.w / 7), this.realTime);
-      this.fx.text(this.w / 2, this.h * 0.32 + 52, '部位全破壊 ― 詠唱阻止・大ダウン', '#FFFFFF', 18, 'info', 1.6);
+      this.fx.callout(this.w / 2, this.h * 0.32, 'ALL BREAK!!', C.gold, Math.min(76, this.w / 7), this.realTime, true);
+      this.fx.text(this.w / 2, this.h * 0.32 + 52, '部位全破壊 ― 詠唱阻止・大ダウン', '#FFFFFF', 18, 'info', 1.6, true);
       if (boss.hp <= 0) { boss.hp = 0; this.startExecution(boss); }
     }
 
@@ -2375,7 +2645,7 @@
       boss.hp -= boss.maxHp * 0.1;
       boss.stunFor(2.0, false);
       for (const c of boss.clones) if (!c.dead) this.kill(c, { src: 'iai' });
-      this.fx.callout(this.w / 2, this.h * 0.4, '特大カウンター!!', C.crimson, Math.min(60, this.w / 9), this.realTime);
+      this.fx.callout(this.w / 2, this.h * 0.4, '特大カウンター!!', C.crimson, Math.min(60, this.w / 9), this.realTime, true);
       this.renderer.doFlash(0.4, '#FFFFFF');
       this.audio.playCounter();
       this.doHitstop(120);
@@ -2421,6 +2691,9 @@
       if (this.player) this.player.invuln = Math.min(this.player.invuln, 2);
       this.state = STATE.BOSS_EXECUTION;
       this.exec = { boss, t: 0, hits: 0, acc: 0, finished: false, finT: 0, wait: 0 };
+      // v3：処刑演出の中心はカメラ基準のワールド座標で固定
+      this.execCenter = { x: this.camera.x, y: this.camera.y - this.view.hh * 0.15, cx: this.camera.x, cy: this.camera.y - this.view.hh * 0.15 };
+      this.afterimages.length = 0;
       // 周囲を一掃
       for (const e of this.enemies) {
         if (e.dead) continue;
@@ -2458,7 +2731,7 @@
       b.hitFlash = 0.06;
       if (ex.hits % 20 === 0 && this.realTime - (ex.lastCall || 0) > 0.45) {
         ex.lastCall = this.realTime;
-        this.fx.callout(this.w / 2, this.h * 0.22, `百裂斬り ${ex.hits}HIT!!`, C.gold, 40, this.realTime);
+        this.fx.callout(this.w / 2, this.h * 0.22, `百裂斬り ${ex.hits}HIT!!`, C.gold, 40, this.realTime, true);
       }
     }
 
@@ -2496,7 +2769,7 @@
       const b = ex.boss;
       // 極太の黄金一閃＋納刀カチッ
       const beam = this.fx.beam(b.x, b.y, 40, 0.7, C.gold, false, -0.25);
-      beam.len = Math.max(this.w, this.h) * 1.5;
+      beam.len = this.view.r * 2.2;
       this.player.sheathe = P.SHEATHE_PAUSE;
       this.audio.playUlt200Slash();
       this.audio.playSheatheClick();
@@ -2519,8 +2792,10 @@
         this.fx.decal(p.x, p.y, (p.r || 40) * 3, 'ink');
       }
       for (let i = 0; i < 4; i++) this.fx.ring(b.x, b.y, 20, 200 + i * 120, 0.6 + i * 0.15, i % 2 ? C.gold : '#FFFFFF', 8 - i);
-      this.fx.callout(this.w / 2, this.h * 0.3, '絶・一閃!!', 'rainbow', Math.min(80, this.w / 7), this.realTime);
+      this.fx.callout(this.w / 2, this.h * 0.3, '絶・一閃!!', 'rainbow', Math.min(80, this.w / 7), this.realTime, true);
       for (let i = 0; i < 12; i++) this.dropGems(b.x + U.rand(-80, 80), b.y + U.rand(-80, 80), 6, 5);
+      // v3：ボス撃破時は広域竜巻吸引（画面外の特大魂オーブも含む）
+      this.later(0.6, () => { if (this.player) this.tornadoVacuum(0, true); });
       this.addUlt(30);
     }
 
@@ -2583,7 +2858,7 @@
       this.fx.crack(this.w / 2, this.h / 2, 1.0);
       for (let i = 0; i < 90; i++) {
         const a = Math.random() * TAU, s = U.rand(200, 800);
-        this.fx.particle(this.w / 2 + U.rand(-200, 200), this.h / 2 + U.rand(-150, 150), Math.cos(a) * s, Math.sin(a) * s - 200, U.rand(0.6, 1.2), U.rand(3, 7), '#E6F0FF', 3, 0.8);
+        this.fx.particle(this.camera.x + U.rand(-200, 200), this.camera.y + U.rand(-150, 150), Math.cos(a) * s, Math.sin(a) * s - 200, U.rand(0.6, 1.2), U.rand(3, 7), '#E6F0FF', 3, 0.8);
       }
       this.audio.playGlassShatter();
       this.renderer.doFlash(0.9, '#FFFFFF');
@@ -2592,18 +2867,19 @@
       const dmg = P.ULT100_FINISH * this.atk();
       const killsBefore = this.run.kills;
       for (const e of this.enemies.slice()) {
-        if (!e.dead && e.x > -30 && e.y > -30 && e.x < this.w + 30 && e.y < this.h + 30) this.dealDamage(e, dmg, { src: 'ult', combo: 1, quiet: true });
+        if (!e.dead && this.inView(e.x, e.y, 30)) this.dealDamage(e, dmg, { src: 'ult', combo: 1, quiet: true });
       }
       for (const b of this.bosses) if (b.lockable) this.dealDamage(b, dmg, { src: 'ult', combo: 1 });
       for (const b of this.bullets) b.dead = true;
-      this._killCallout(this.run.kills - killsBefore, this.w / 2, this.h * 0.35);
+      const kc = this.scr(0.5, 0.35);
+      this._killCallout(this.run.kills - killsBefore, kc.x, kc.y);
     }
 
     /** 第弐奥義『絶・虚空一文字』 */
     startUlt200() {
       this.ultGauge = 0;
       this.ultMode = 'ult200';
-      this.ult = { phase: 1, t: 0, swipeStart: null };
+      this.ult = { phase: 1, t: 0, swipeStart: null, cx: this.camera.x, cy: this.camera.y };
       for (const f of this.formations) f.finish();
       this.player.invuln = 99;
       this.audio.playUltimate200();
@@ -2615,7 +2891,7 @@
     _updateUlt200(dt) {
       const u = this.ult;
       u.t += dt;
-      const cx = this.w / 2, cy = this.h / 2;
+      const cx = this.ult ? this.ult.cx : this.camera.x, cy = this.ult ? this.ult.cy : this.camera.y;
       if (u.phase === 1) {
         // 重力収束：全てを画面中央へ吸い寄せる
         const k = Math.min(1, dt * (2 + u.t * 5));
@@ -2636,7 +2912,7 @@
           for (const c of b.cores) { c.x += dx; c.y += dy; }
         }
         if (Math.random() < 0.6) {
-          const a = Math.random() * TAU, r = Math.max(this.w, this.h) * 0.6;
+          const a = Math.random() * TAU, r = this.view.r * 0.9;
           this.fx.particle(cx + Math.cos(a) * r, cy + Math.sin(a) * r, -Math.cos(a) * 900, -Math.sin(a) * 900, 0.6, 2, C.gold, 0, 0);
         }
         this.shake(1.2);
@@ -2661,18 +2937,18 @@
       u.t = 0;
       this.ui.hideCutin();
       // 画面全体が中央の斬撃線で上下2つにガクッとズレる
-      const cx = this.w / 2, cy = this.h / 2;
-      this.renderer.addSplit(cx - this.w, cy, cx + this.w, cy, 46, 0.7);
+      const cx = this.ult ? this.ult.cx : this.camera.x, cy = this.ult ? this.ult.cy : this.camera.y;
+      this.renderer.addSplit(cx - this.view.r * 2, cy, cx + this.view.r * 2, cy, 46, 0.7);
       const s = this.renderer.splits[this.renderer.splits.length - 1];
       s.hold = P.ULT200_SILENCE;
       const beam = this.fx.beam(cx, cy, 30, 0.5, C.gold, false, 0);
-      beam.len = this.w * 1.5;
+      beam.len = this.view.r * 2.2;
       this.audio.playUlt200Slash();
       this.audio.duck(1.2);
     }
 
     _supernova() {
-      const cx = this.w / 2, cy = this.h / 2;
+      const cx = this.ult ? this.ult.cx : this.camera.x, cy = this.ult ? this.ult.cy : this.camera.y;
       const atk = this.atk();
       const dmg = P.ULT200_DAMAGE * atk;
       const killsBefore = this.run.kills;
@@ -2712,7 +2988,7 @@
       if (this.ultMode !== 'ult200' || !this.ult) return;
       const u = this.ult;
       if (u.phase === 3 && u.boomed) return;
-      const cx = this.w / 2, cy = this.h / 2;
+      const cx = this.ult ? this.ult.cx : this.camera.x, cy = this.ult ? this.ult.cy : this.camera.y;
       const grow = u.phase === 1 ? U.easeOutCubic(Math.min(1, u.t / 0.6)) : 1;
       const R = 80 * grow + (u.phase === 2 ? Math.sin(this.realTime * 20) * 3 : 0);
       ctx.save();
@@ -2853,7 +3129,8 @@
         const counts = new Map();
         list.forEach((o, i) => { if (!firstIdx.has(o)) firstIdx.set(o, i + 1); counts.set(o, (counts.get(o) || 0) + 1); });
         let drawn = 0;
-        ctx.font = '800 11px "Hiragino Sans","Yu Gothic","Noto Sans JP",sans-serif';
+        const izb = 1 / this.camera.zoom;
+        ctx.font = `800 ${11 * izb}px "Hiragino Sans","Yu Gothic","Noto Sans JP",sans-serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         for (const [o, idx] of firstIdx) {
@@ -2883,12 +3160,15 @@
       }
       // ロック数カウンター（カーソル横）
       if (m === 'aim' && list.length) {
-        ctx.font = '900 22px "Hiragino Sans","Yu Gothic","Noto Sans JP",sans-serif';
+        // ワールド空間内でも文字は等倍に見えるよう 1/zoom 補正
+        const iz = 1 / this.camera.zoom;
+        ctx.font = `900 ${22 * iz}px "Hiragino Sans","Yu Gothic","Noto Sans JP",sans-serif`;
         const s = `${list.length} LOCK`;
         const tw = ctx.measureText(s).width;
-        const flip = inp.cx + 18 + tw > this.w - 8;
-        const lx = flip ? inp.cx - 18 - tw : inp.cx + 18;
-        const ly = U.clamp(inp.cy - 40, 24, this.h - 10);
+        const sp = this.worldToScreen(inp.cx, inp.cy);
+        const flip = sp.x + 18 + tw / iz > this.w - 8;
+        const lx = flip ? inp.cx - (18 * iz) - tw : inp.cx + 18 * iz;
+        const ly = inp.cy - 40 * iz;
         ctx.textAlign = 'left';
         ctx.lineWidth = 4;
         ctx.strokeStyle = pal.inv ? '#fff' : '#000';
@@ -2936,7 +3216,7 @@
         run.awakenings.add(c.data.id);
         this.audio.playAwaken();
         this.renderer.doFlash(0.5, C.gold);
-        this.later(0.05, () => this.fx.callout(this.w / 2, this.h * 0.3, c.data.name.replace('【極意】', '極意・'), C.gold, Math.min(40, this.w / 16), this.realTime), true);
+        this.later(0.05, () => this.fx.callout(this.w / 2, this.h * 0.3, c.data.name.replace('【極意】', '極意・'), C.gold, Math.min(40, this.w / 16), this.realTime, true), true);
       } else {
         if (c.data.id === 'heal') this.player.hp = Math.min(this.player.maxHp, this.player.hp + 1);
         else if (c.data.id === 'ultCharge') this.addUlt(35);
